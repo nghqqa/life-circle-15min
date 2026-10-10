@@ -211,26 +211,31 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
       .catch((err) => res.json({ status: -1, message: String(err?.message ?? err) }));
   });
 
-  // POST /api/batch/street  {address|lat/lng, radiusM?, maxCommunities?} → {jobId}
+  // POST /api/batch/street  {address|lat/lng, scope?, radiusM?, maxCommunities?} → {jobId}
+  // scope=street（默认，≤3km/16 点）｜scope=district（城区试点，≤8km/30 点，结果按街道分组）
   router.post('/batch/street', (req, res) => {
-    const { lat, lng, address, radiusM, maxCommunities } = req.body ?? {};
+    const { lat, lng, address, radiusM, maxCommunities, scope } = req.body ?? {};
+    const isDistrict = scope === 'district';
     if (!address && (typeof lat !== 'number' || typeof lng !== 'number')) {
       res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
       return;
     }
     sweepJobs();
+    const maxRadius = isDistrict ? 8000 : 3000;
+    const maxN = isDistrict ? 30 : 16;
     const doStart = (center: { lat: number; lng: number }, name: string) => {
       const job = startStreetBatch(
         cfg.akServer,
         center,
         name,
-        Math.min(3000, Math.max(800, Number(radiusM) || 2500)),
-        Math.min(16, Math.max(3, Number(maxCommunities) || 10))
+        Math.min(maxRadius, Math.max(800, Number(radiusM) || (isDistrict ? 5000 : 2500))),
+        Math.min(maxN, Math.max(3, Number(maxCommunities) || (isDistrict ? 16 : 10))),
+        isDistrict ? 'district' : 'street'
       );
-      res.json({ status: 0, jobId: job.id, total: job.total });
+      res.json({ status: 0, jobId: job.id, total: job.total, scope: isDistrict ? 'district' : 'street' });
     };
     if (typeof lat === 'number' && typeof lng === 'number') {
-      doStart({ lat, lng }, String(address ?? '指定片区'));
+      doStart({ lat, lng }, String(address ?? (isDistrict ? '指定城区' : '指定街道')));
       return;
     }
     // 地理编码对街道级地址偶发「无相关结果」：提取城市前缀作为 city 提示 + 失败重试一次

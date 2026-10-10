@@ -340,33 +340,57 @@ function streetHtml(): string {
     任务在服务端串行执行，首次约 1-3 分钟（受上游限流），结果服务端缓存。
   </div>
   <div class="plan-card">
-    <label class="lbl" for="street-addr">街道 / 片区地址</label>
-    <input id="street-addr" style="width:100%;height:32px;margin:6px 0;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;font-size:13px" placeholder="如：上饶市信州区东市街道" />
-    <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+    <label class="lbl" for="street-addr">街道 / 片区 / 城区地址</label>
+    <input id="street-addr" style="width:100%;height:32px;margin:6px 0;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;font-size:13px" placeholder="如：上饶市信州区东市街道 / 上饶市信州区" />
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+      <label class="lbl">范围</label>
+      <select id="street-scope" style="height:30px">
+        <option value="street" selected>街道体检</option>
+        <option value="district">城区试点</option>
+      </select>
       <label class="lbl">采样半径</label>
       <select id="street-radius" style="height:30px">
         <option value="1500">1.5 km</option>
         <option value="2500" selected>2.5 km</option>
         <option value="3000">3 km</option>
+        <option value="5000">5 km</option>
+        <option value="6500">6.5 km</option>
       </select>
       <label class="lbl">采样点上限</label>
       <select id="street-max" style="height:30px">
         <option value="6">6</option>
         <option value="10" selected>10</option>
-        <option value="14">14</option>
+        <option value="16">16</option>
+        <option value="24">24</option>
       </select>
       <button id="btn-street-start" class="btn primary" style="margin-left:auto">开始</button>
     </div>
+    <div class="rpt-sub" id="street-scope-note" style="margin-top:6px">街道体检：半径 ≤3km、≤16 个采样点。切到「城区试点」可扩大到 8km / 30 点，结果将按街道分组排名（约 3-6 分钟，企业配额）。</div>
   </div>
   <div id="street-status"></div>`;
 }
 
 function wireStreet() {
+  const scopeSel = document.getElementById('street-scope') as HTMLSelectElement | null;
+  scopeSel?.addEventListener('change', () => {
+    const d = scopeSel.value === 'district';
+    const radius = document.getElementById('street-radius') as HTMLSelectElement | null;
+    const max = document.getElementById('street-max') as HTMLSelectElement | null;
+    if (radius) radius.value = d ? '5000' : '2500';
+    if (max) max.value = d ? '16' : '10';
+    const note = document.getElementById('street-scope-note');
+    if (note) {
+      note.textContent = d
+        ? '城区试点：半径可至 8km、最多 30 个采样点，结果将按街道分组排名（约 3-6 分钟，企业配额）。'
+        : '街道体检：半径 ≤3km、≤16 个采样点。切到「城区试点」可扩大到 8km / 30 点，结果将按街道分组排名。';
+    }
+  });
   const btn = document.getElementById('btn-street-start');
   btn?.addEventListener('click', async () => {
     if (btn.classList.contains('btn-busy')) return;
     const addr = (document.getElementById('street-addr') as HTMLInputElement)?.value.trim();
     if (!addr) { banner('请先输入街道 / 片区地址', 'warn'); return; }
+    const scope = (document.getElementById('street-scope') as HTMLSelectElement)?.value ?? 'street';
     btn.classList.add('btn-busy');
     btn.textContent = '提交中…';
     try {
@@ -375,6 +399,7 @@ function wireStreet() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address: addr,
+          scope,
           radiusM: Number((document.getElementById('street-radius') as HTMLSelectElement).value),
           maxCommunities: Number((document.getElementById('street-max') as HTMLSelectElement).value)
         })
@@ -469,6 +494,12 @@ function updateStreetStatus() {
   ${(sum.weakList ?? []).length ? `<div class="sec-title">公平性视角 · 薄弱小区清单</div>
   <table class="tbl"><thead><tr><th>小区</th><th>评分</th><th>覆盖率</th><th>主要缺失</th></tr></thead><tbody>${weakRows}</tbody></table>
   <div class="rpt-sub">公平性口径：评分 &lt; 75 或人口覆盖率 &lt; 80% 判定为薄弱小区——资源应优先向这些片区倾斜。</div>` : ''}
+  ${(s.summary?.streetGroups ?? []).length ? `<div class="sec-title">城区试点 · 街道分组排名</div>
+  <table class="tbl"><thead><tr><th>街道</th><th>小区数</th><th>均分</th><th>薄弱</th><th>最优</th><th>最差</th></tr></thead>
+  <tbody>${(s.summary?.streetGroups ?? []).map((g: any) => `<tr>
+    <td>${escapeHtml(g.street)}</td><td class="num">${g.count}</td><td class="num"><b>${g.avgScore}</b></td>
+    <td class="num">${g.weakCount || '—'}</td>
+    <td class="num">${g.bestScore}　</td><td class="num">${g.worstScore}</td></tr>`).join('')}</tbody></table>` : ''}
   ${communityTable(s.communities)}
   <div class="rpt-sub">说明：小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
 }

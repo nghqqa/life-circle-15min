@@ -322,7 +322,7 @@ async function analyze() {
         sb.map((b) => destination(state.center, b, probeM * 0.6))
       );
       const realProbes = real.value
-        .map((p, i) => ({ bearing: sb[i], distM: p && p.ok ? p.distM : 0 }))
+        .map((p, i) => ({ bearing: sb[i], straightM: probeM * 0.6, distM: p && p.ok ? p.distM : 0 }))
         .filter((p) => p.distM > 0);
       accuracy = interpolationAccuracy(
         state.center,

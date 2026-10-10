@@ -189,7 +189,11 @@ export async function runAnalysis(
       sampleB.map((b) => destination(center, b, probeM * 0.6))
     );
     const realProbes = real
-      .map((p, i) => ({ bearing: sampleB[i], distM: p && p.ok ? p.distM : 0 }))
+      .map((p, i) => ({
+        bearing: sampleB[i],
+        straightM: probeM * 0.6,
+        distM: p && p.ok ? p.distM : 0
+      }))
       .filter((p) => p.distM > 0);
     accuracy = interpolationAccuracy(
       center,

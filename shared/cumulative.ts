@@ -41,26 +41,32 @@ export function cumulativeOpportunities(
 /**
  * 插值精度自证：抽样若干真实算路点，对比「模型估计步行时间」与「真实路网步行时间」，
  * 输出平均绝对误差（分钟与百分比）。用于向评审量化扇形插值方法的近似误差。
+ * 模型估计口径：直线位移距离 × 绕行系数 f(θ) ÷ 速度——与等时圈模型同构。
  */
 export interface AccuracyReport {
   samples: number;
   maeMinutes: number;
   maePercent: number;
   worstPercent: number;
-  details: { bearing: number; realMin: number; estMin: number }[];
+  details: { bearing: number; straightM: number; realMin: number; estMin: number }[];
 }
 
 export function interpolationAccuracy(
   center: LatLng,
-  realProbes: { bearing: number; distM: number }[],
+  realProbes: { bearing: number; straightM: number; distM: number }[],
   factorsAt: (thetaDeg: number) => number,
   speed: number
 ): AccuracyReport {
-  const details = realProbes.map(({ bearing, distM }) => {
+  const details = realProbes.map(({ bearing, straightM, distM }) => {
     const realMin = distM / speed;
     const f = factorsAt(bearing);
-    const estMin = (distM * f) / speed;
-    return { bearing: Math.round(bearing), realMin: Math.round(realMin * 10) / 10, estMin: Math.round(estMin * 10) / 10 };
+    const estMin = (straightM * f) / speed;
+    return {
+      bearing: Math.round(bearing),
+      straightM: Math.round(straightM),
+      realMin: Math.round(realMin * 10) / 10,
+      estMin: Math.round(estMin * 10) / 10
+    };
   });
   if (!details.length) {
     return { samples: 0, maeMinutes: 0, maePercent: 0, worstPercent: 0, details: [] };

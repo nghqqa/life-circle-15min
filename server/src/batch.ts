@@ -13,6 +13,7 @@ import { TtlCache } from './cache.js';
 
 export interface BatchCommunityResult {
   name: string;
+  street: string;
   center: LatLng;
   score: number;
   grade: string;
@@ -23,6 +24,17 @@ export interface BatchCommunityResult {
   planTop: string | null;
   degraded: boolean;
   error?: string;
+}
+
+export interface StreetGroup {
+  street: string;
+  count: number;
+  avgScore: number;
+  weakCount: number;
+  bestName: string | null;
+  bestScore: number;
+  worstName: string | null;
+  worstScore: number;
 }
 
 export interface BatchJob {
@@ -45,6 +57,8 @@ export interface BatchJob {
     scoreGap: number;
     /** 薄弱清单：评分 < 75 或覆盖率 < 80% 的小区 */
     weakList: { name: string; score: number; coverageShare: number; dominantMissing: string | null }[];
+    /** 城区级试点：按街道分组的聚合排名 */
+    streetGroups: StreetGroup[];
   } | null;
   error?: string;
 }
@@ -140,12 +154,19 @@ function centroid(pois: Poi[]): LatLng {
   return { lat, lng };
 }
 
+/** 从逆地理编码地址中提取街道名（如「东市街道」） */
+export function extractStreet(name: string): string {
+  const m = name.match(/([\u4e00-\u9fa5]{2,6}街道)/);
+  return m ? m[1] : '其他片区';
+}
+
 export function startStreetBatch(
   ak: string,
   center: LatLng,
   centerName: string,
   radiusM: number,
-  maxCommunities: number
+  maxCommunities: number,
+  scope: 'street' | 'district' = 'street'
 ): BatchJob {
   const job: BatchJob = {
     id: jobId(),
@@ -191,6 +212,7 @@ export function startStreetBatch(
           );
           job.communities.push({
             name: report.centerName.includes(',') ? p.name : report.centerName,
+            street: extractStreet(report.centerName),
             center: report.center,
             score: report.score.total,
             grade: report.score.grade,
@@ -206,6 +228,7 @@ export function startStreetBatch(
         } catch (err) {
           job.communities.push({
             name: p.name,
+            street: extractStreet(p.name),
             center: { lat: p.lat, lng: p.lng },
             score: -1,
             grade: '-',
@@ -224,6 +247,30 @@ export function startStreetBatch(
       const sorted = [...valid].sort((a, b) => b.score - a.score);
       const gradeDist: Record<string, number> = {};
       for (const c of valid) gradeDist[c.grade] = (gradeDist[c.grade] ?? 0) + 1;
+      // 城区级试点：按街道分组聚合（每街道小区数/均分/薄弱数/最优最差）
+      const groupMap = new Map<string, BatchCommunityResult[]>();
+      for (const c of valid) {
+        const list = groupMap.get(c.street) ?? [];
+        list.push(c);
+        groupMap.set(c.street, list);
+      }
+      const streetGroups: StreetGroup[] = [...groupMap.entries()]
+        .map(([street, list]) => {
+          const ss = [...list].sort((a, b) => b.score - a.score);
+          const avg = Math.round((list.reduce((a, c) => a + c.score, 0) / list.length) * 10) / 10;
+          const weak = list.filter((c) => c.score < 75 || c.coverageShare < 0.8).length;
+          return {
+            street,
+            count: list.length,
+            avgScore: avg,
+            weakCount: weak,
+            bestName: ss[0]?.name ?? null,
+            bestScore: ss[0]?.score ?? 0,
+            worstName: ss[ss.length - 1]?.name ?? null,
+            worstScore: ss[ss.length - 1]?.score ?? 0
+          };
+        })
+        .sort((a, b) => b.avgScore - a.avgScore);
       job.summary = {
         avgScore: valid.length ? Math.round((valid.reduce((a, c) => a + c.score, 0) / valid.length) * 10) / 10 : 0,
         gradeDist,
@@ -233,7 +280,8 @@ export function startStreetBatch(
         weakList: valid
           .filter((c) => c.score < 75 || c.coverageShare < 0.8)
           .sort((a, b) => a.score - b.score)
-          .map((c) => ({ name: c.name, score: c.score, coverageShare: c.coverageShare, dominantMissing: c.dominantMissing }))
+          .map((c) => ({ name: c.name, score: c.score, coverageShare: c.coverageShare, dominantMissing: c.dominantMissing })),
+        streetGroups
       };
       job.status = 'done';
     } catch (err) {
