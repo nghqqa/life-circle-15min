@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-server/
+.env
+.env.local
+*.local
+.DS_Store
+npm-debug.log*
+.vite/
+*.pdf
+ai_15*.txt
+server.log

@@ -1,0 +1,37 @@
+{
+  "name": "life-circle-15min",
+  "version": "0.1.0",
+  "description": "基于百度地图开放能力的“15分钟生活圈”智能体检与规划助手",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/src/index.ts",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=cjs --outfile=dist-server/index.cjs --log-level=warning",
+    "start": "node --env-file-if-exists=.env dist-server/index.cjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "docker:build": "docker build -t life-circle-15min .",
+    "docker:run": "docker run --rm -p 8787:8787 --env-file .env life-circle-15min"
+  },
+  "dependencies": {
+    "echarts": "^5.6.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.2"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-server
+.env
+.env.local
+.git
+*.pdf
+ai_15*.txt
+docs
+README.md

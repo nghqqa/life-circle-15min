@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="基于百度地图开放能力的 15 分钟生活圈智能体检与规划助手：真实路网等时圈、步行时间热力面、服务盲区识别与补点规划建议" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>15分钟生活圈 · 智能体检与规划助手</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <div class="brand">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+            <rect x="1" y="1" width="30" height="30" rx="8" fill="#2f6fed"/>
+            <circle cx="16" cy="16" r="9.5" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="4.2 2.9" stroke-linecap="round"/>
+            <circle cx="16" cy="16" r="3.4" fill="#ffffff"/>
+          </svg>
+          <span class="app-name">15分钟生活圈 · 智能体检与规划助手</span>
+          <span id="mode-badge" class="badge badge-warn" title="数据通道状态">检测中…</span>
+        </div>
+        <div class="controls">
+          <button id="btn-sidebar" class="btn ghost only-narrow" aria-label="打开图层侧栏">图层</button>
+          <button id="btn-panel" class="btn ghost only-narrow" aria-label="打开体检报告">报告</button>
+          <input id="addr-input" placeholder="输入地址 / 小区名，回车定位" />
+          <button id="btn-locate" class="btn ghost" title="地理编码定位">定位</button>
+          <button id="btn-pick" class="btn ghost" title="在地图上点击选择中心点">图上选点</button>
+          <span class="divider"></span>
+          <label class="lbl" for="persona">人群</label>
+          <select id="persona">
+            <option value="adult">一般成人</option>
+            <option value="elderly">老年人</option>
+            <option value="child">儿童(陪同)</option>
+          </select>
+          <label class="lbl" for="minutes">时长</label>
+          <select id="minutes">
+            <option value="15" selected>15 分钟</option>
+            <option value="10">10 分钟</option>
+            <option value="5">5 分钟</option>
+          </select>
+          <button id="btn-analyze" class="btn primary">开始体检</button>
+        </div>
+      </header>
+
+      <main id="layout">
+        <aside id="sidebar">
+          <section class="card">
+            <h3>图层</h3>
+            <label><input type="checkbox" id="ly-heat" checked /> 步行时间热力面</label>
+            <label><input type="checkbox" id="ly-rings" checked /> 等时环（5/10/15 分）</label>
+            <label><input type="checkbox" id="ly-poi" checked /> 设施 POI</label>
+            <label><input type="checkbox" id="ly-gap" checked /> 灰色区域</label>
+            <label><input type="checkbox" id="ly-plan" checked /> 补点规划建议</label>
+            <label><input type="checkbox" id="ly-cross" checked /> 过街设施扫描</label>
+          </section>
+          <section class="card" id="legend-card">
+            <h3>图例</h3>
+            <div class="heat-legend">
+              <span class="grad"></span>
+              <div class="heat-ticks"><i>0′</i><i>5′</i><i>10′</i><i>15′</i><i>20′+</i></div>
+            </div>
+            <div id="legend-pois" class="poi-legend"></div>
+          </section>
+          <section class="card" id="channel-card">
+            <h3>数据通道</h3>
+            <div id="channel-list" class="channel-list">待分析…</div>
+          </section>
+          <section class="card muted">
+            <h3>使用说明</h3>
+            <ol>
+              <li>输入地址定位，或直接在地图上点击选点；</li>
+              <li>选择人群（老年人速度更慢，可达范围更小）；</li>
+              <li>点击「开始体检」，系统基于真实路网计算步行时间场；</li>
+              <li>查看体检报告、国标清单与补点规划建议。</li>
+            </ol>
+          </section>
+        </aside>
+
+        <div id="map-wrap">
+          <div id="map"></div>
+          <div id="map-placeholder" class="hidden">
+            <div class="ph-box">
+              <div class="ph-title">演示模式</div>
+              <div class="ph-text">未配置百度地图 AK，地图底图不可用。<br />体检引擎将以合成数据完整运行，可查看右侧全部报告。<br />配置方法见 README（BAIDU_MAP_AK_BROWSER）。</div>
+            </div>
+          </div>
+        </div>
+
+        <section id="panel">
+          <nav id="panel-tabs">
+            <button data-tab="report" class="on">体检报告</button>
+            <button data-tab="checklist">国标清单</button>
+            <button data-tab="gaps">灰色区域</button>
+            <button data-tab="plan">规划建议</button>
+            <button data-tab="log">运行日志</button>
+          </nav>
+          <div id="panel-body">
+            <div class="empty-tip">选择中心点后点击「开始体检」</div>
+          </div>
+          <div id="panel-footer" class="hidden">
+            <button id="btn-print" class="btn ghost">打印 / 导出 PDF</button>
+            <button id="btn-json" class="btn ghost">导出 JSON</button>
+          </div>
+        </section>
+      </main>
+
+      <div id="hud" class="hidden">
+        <div class="hud-box">
+          <div class="hud-title" id="hud-title">分析中…</div>
+          <ul id="hud-steps"></ul>
+          <div class="hud-note" id="hud-note"></div>
+        </div>
+      </div>
+
+      <div id="banner" class="hidden"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
