@@ -57,8 +57,8 @@ export function computeScore(
   const proximity =
     counted.reduce((a, d) => a + d.proximity * CATEGORY_MAP[d.category].weight, 0) / wSum;
 
-  // 人口覆盖：无居住采样时无法评估（置空，并从总分加权中剔除该维度）
-  const coverageAvailable = gap.totalWeight > 0;
+  // 人口覆盖：无居住采样或核心类别全未知时无法评估（置空，并从总分加权中剔除该维度）
+  const coverageAvailable = gap.totalWeight > 0 && gap.coverageShare != null;
   const coverage = coverageAvailable ? gap.coverageShare : null;
 
   const counts = counted.map((d) => d.count);

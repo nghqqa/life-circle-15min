@@ -43,21 +43,26 @@ export function planFacilities(
   gap: GapAnalysis,
   field: TimeField,
   personaSpeed: number,
-  opts: { topK?: number; coreRadiusM?: number } = {}
+  opts: { topK?: number; coreRadiusM?: number; unknownCategories?: string[] } = {}
 ): PlanSite[] {
-  return planFacilitiesFromCoverage(gap, gap.coveredMasks, field, personaSpeed, opts);
+  return planFacilitiesFromCoverage(gap, gap.coveredMasks, field, personaSpeed, {
+    ...opts,
+    unknownCategories: opts.unknownCategories ?? gap.unknownCategories
+  });
 }
 export function planFacilitiesFromCoverage(
   gap: GapAnalysis,
   coveredMasks: Record<string, Uint8Array>,
   field: TimeField,
   personaSpeed: number,
-  opts: { topK?: number; coreRadiusM?: number } = {}
+  opts: { topK?: number; coreRadiusM?: number; unknownCategories?: string[] } = {}
 ): PlanSite[] {
   const topK = opts.topK ?? THRESHOLDS.planTopK;
   const R = opts.coreRadiusM ?? THRESHOLDS.coreRadiusM;
   const n = gap.n;
   const stepM = gridExtentM(field) / (n - 1);
+  // 检索失败（未知）的类别：掩码不可信（未知 ≠ 缺失），不得生成补建建议
+  const unknown = new Set<string>(opts.unknownCategories ?? gap.unknownCategories ?? []);
 
   const cov: Record<string, Uint8Array> = {};
   for (const cat of CORE_CATEGORIES) cov[cat] = Uint8Array.from(coveredMasks[cat]);
@@ -71,14 +76,15 @@ export function planFacilitiesFromCoverage(
     return totalWeight > 0 ? w / totalWeight : 1;
   };
 
-  // 候选点：所有「有居住权重且缺失任一核心设施」的格点（含单缺场景），
-  // 按步长抽样去密；每个候选对其缺失的每个核心类别各生成一条（贪心按收益择优）
+  // 候选点：所有「有居住权重且缺失任一【已知】核心设施」的格点（含单缺场景），
+  // 按步长抽样去密；每个候选对其缺失的每个已知核心类别各生成一条（贪心按收益择优）。
+  // 未知类别（检索失败）跳过——掩码不可信，不得据此建议补建。
   const candidates: { k: number; cat: string }[] = [];
   const stride = Math.max(1, Math.round(R / stepM / 3));
   for (let k = 0; k < n * n; k++) {
     if (weight[k] <= 0) continue;
     if (k % (stride * stride) !== 0) continue; // 稳定抽样去密
-    const missingHere = CORE_CATEGORIES.filter((c) => cov[c][k] === 0);
+    const missingHere = CORE_CATEGORIES.filter((c) => cov[c][k] === 0 && !unknown.has(c));
     for (const cat of missingHere) candidates.push({ k, cat });
   }
 

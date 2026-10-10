@@ -205,11 +205,13 @@ export function analyzeGaps(
   patches.sort((a, b) => b.weight - a.weight);
 
   const coverageUnavailable = totalWeight <= 0;
-  // 覆盖率按「已判定核心类别的并集」计算：三件套中任一类未知时，
-  // "全覆盖"结论不可靠——任一已判定类别缺失即计为未覆盖，且标注未知类别
+  // 覆盖率口径：按「已判定核心类别的并集」计算。
+  // 三件套全部未知（judgedCats 为空）时无法评估 → null；
+  // 部分未知时任一已判定类别缺失即计为未覆盖（未知 ≠ 覆盖成功）。
+  const coreCoverageUnknown = judgedCats.length === 0;
   let covWeight = 0;
   let severeWeight = 0;
-  if (!coverageUnavailable) {
+  if (!coverageUnavailable && !coreCoverageUnknown) {
     for (let k = 0; k < n * n; k++) {
       const w = weightGrid[k];
       if (w <= 0) continue;
@@ -228,9 +230,9 @@ export function analyzeGaps(
     coveredMasks: covered as Record<string, Uint8Array>,
     unknownCategories: CORE_CATEGORIES.filter((c) => failedCats.has(c)),
     patches: patches.slice(0, 8),
-    coverageShare: coverageUnavailable ? null : covWeight / totalWeight,
-    severeShare: coverageUnavailable ? null : severeWeight / totalWeight,
-    coverageUnavailable,
+    coverageShare: coverageUnavailable || coreCoverageUnknown ? null : covWeight / totalWeight,
+    severeShare: coverageUnavailable || coreCoverageUnknown ? null : severeWeight / totalWeight,
+    coverageUnavailable: coverageUnavailable || coreCoverageUnknown,
     blindPoints
   };
 }

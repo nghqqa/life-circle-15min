@@ -99,6 +99,8 @@ export interface AnalysisReport {
   failedCategories: CategoryId[];
   /** true = 设施检索全部失败，报告为不完整结果（批量任务应计为失败） */
   incomplete: boolean;
+  /** true = 检索因上游配额耗尽被截断（incomplete 必为 true） */
+  quotaExhausted: boolean;
   steps: AnalysisStep[];
 }
 
@@ -243,8 +245,8 @@ export async function runAnalysis(
   const scoredCats = CATEGORIES.filter((c) => c.scored);
   const scoredFailed = scoredCats.filter((c) => c.keywords.every((kw) => failedKw.has(kw)));
   const poiOk = scoredCats.some((c) => !scoredFailed.some((f) => f.id === c.id) && (perKw[c.keywords[0]] ?? 0) > 0);
-  // 全部已评分类别检索失败 → 报告不完整，批量任务应计为失败而非 0 分结果
-  const incomplete = !poiOk;
+  // 数据被额度截断或全部失败 → 报告不完整（批量任务计为失败，不参与排名）
+  const incomplete = !poiOk || quotaExhausted;
   step(
     '设施 POI 检索',
     Date.now() - t0,
@@ -262,7 +264,6 @@ export async function runAnalysis(
   const failedCategories = CATEGORIES.filter((c) => c.keywords.every((kw) => failedKw.has(kw))).map(
     (c) => c.id
   );
-
   // 5) 盲区 + 评分 + 清单（失败类别按「无法判断」贯通）
   t0 = Date.now();
   const gap = analyzeGaps(field, cleaned, { failedCategories });
@@ -272,7 +273,9 @@ export async function runAnalysis(
 
   // 6) 补点规划
   t0 = Date.now();
-  const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed);
+  const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed, {
+    unknownCategories: failedCategories
+  });
   step('补点规划', Date.now() - t0, true, `${planSites.length} 条建议`);
 
   const counts: Record<string, number> = {};
@@ -303,6 +306,7 @@ export async function runAnalysis(
     warnings,
     failedCategories,
     incomplete,
+    quotaExhausted,
     model: {
       dirs,
       probeM,

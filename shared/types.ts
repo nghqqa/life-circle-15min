@@ -227,6 +227,8 @@ export interface AnalysisResult {
   failedCategories?: CategoryId[];
   /** true = 设施检索全部失败，报告为不完整结果 */
   incomplete?: boolean;
+  /** true = 检索因上游配额耗尽被截断（incomplete 必为 true） */
+  quotaExhausted?: boolean;
   /** 累积机会指标（学界标准口径）：圈内可步行抵达的设施总数与类别数 */
   cumulative?: {
     total: number;

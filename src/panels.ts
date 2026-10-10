@@ -318,7 +318,10 @@ function currentSites(r: AnalysisResult): PlanSite[] {
     cov,
     r.field,
     PERSONA_MAP[r.persona].speed,
-    { topK: THRESHOLDS.planTopK + rejectedSites.length }
+    {
+      topK: THRESHOLDS.planTopK + rejectedSites.length,
+      unknownCategories: r.failedCategories ?? []
+    }
   );
   return sites.filter((s) =>
     rejectedSites.every((rj) => localDistM(s.latLng.lat, s.latLng.lng, rj.latLng.lat, rj.latLng.lng) > 400)

@@ -361,7 +361,9 @@ async function analyze() {
 
     // 6) 补点规划
     hud.doing(5, '贪心最大覆盖求解补点位置');
-    const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed);
+    const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed, {
+      unknownCategories: failedCategories
+    });
     hud.done(5, 'server', 0);
 
     // 7) 过街设施扫描（可选）

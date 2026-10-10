@@ -244,7 +244,13 @@ export function startStreetBatch(
               job.requestCount++;
             }
           );
-          // 数据不完整（如上游配额/检索全面失败）→ 计为失败，不作为 0 分结果参与排名
+          // 额度耗尽的报告：立即终止整个任务（后续小区必然同样失败）
+          if (report.quotaExhausted) {
+            job.status = 'error';
+            job.error = `上游配额耗尽，任务中止于第 ${job.done + 1}/${job.total} 个小区（${p.name}）`;
+            return;
+          }
+          // 数据不完整（设施检索全部失败/被截断）→ 计为失败，不作为 0 分结果参与排名
           if (report.incomplete) throw new Error('数据不完整：该小区设施检索全部失败');
           job.consecutiveFailures = 0;
           job.communities.push({
