@@ -221,21 +221,40 @@ export async function runAnalysis(
   const tasks = CATEGORIES.flatMap((c) => c.keywords.map((kw) => ({ cat: c, kw })));
   const perKw: Record<string, number> = {};
   const failedKw = new Set<string>();
+  let quotaExhausted = false;
   for (const t of tasks) {
     try {
       const found = await provider.searchPoi(t.kw, t.cat.id, center, searchRadiusM);
       pois.push(...found);
       perKw[t.kw] = found.length;
-    } catch {
+    } catch (err) {
       perKw[t.kw] = 0;
       failedKw.add(t.kw);
+      // 额度耗尽：后续检索必然失败，立即中止以保护配额
+      const msg = String((err as Error)?.message ?? err);
+      if (msg.includes('302') || msg.includes('配额') || msg.includes('daily') || msg.includes('限')) {
+        quotaExhausted = true;
+        break;
+      }
     }
   }
   const cleaned = dedupePois(pois);
-  const poiOk = Object.values(perKw).some((n) => n > 0);
-  // 全部（或全部已评分）类别检索失败 → 报告不完整，批量任务应计为失败而非 0 分结果
+  // poiOk 只按【已评分设施】判定——住宅小区是人口代理，不能掩盖评分设施检索失败
+  const scoredCats = CATEGORIES.filter((c) => c.scored);
+  const scoredFailed = scoredCats.filter((c) => c.keywords.every((kw) => failedKw.has(kw)));
+  const poiOk = scoredCats.some((c) => !scoredFailed.some((f) => f.id === c.id) && (perKw[c.keywords[0]] ?? 0) > 0);
+  // 全部已评分类别检索失败 → 报告不完整，批量任务应计为失败而非 0 分结果
   const incomplete = !poiOk;
-  step('设施 POI 检索', Date.now() - t0, poiOk, incomplete ? `全部类别检索失败` : `共 ${cleaned.length} 条`);
+  step(
+    '设施 POI 检索',
+    Date.now() - t0,
+    poiOk,
+    quotaExhausted
+      ? '上游配额耗尽，检索中止'
+      : incomplete
+        ? '全部已评分类别检索失败'
+        : `共 ${cleaned.length} 条`
+  );
 
   // 4b) 累积机会指标（学界标准口径）
   const cumulative = cumulativeOpportunities(field, cleaned, minutes);
@@ -270,6 +289,9 @@ export async function runAnalysis(
     totalWeight: gap.totalWeight,
     poiOk
   });
+  if (quotaExhausted) {
+    warnings.unshift('上游配额耗尽，部分或全部检索中止：本报告为不完整结果');
+  }
 
   return {
     center,

@@ -76,15 +76,15 @@ export function analyzeGaps(
   for (let k = 0; k < n * n; k++) if (!inCircle(k)) weightGrid[k] = 0;
   const totalWeight = weightGrid.reduce((a, b) => a + b, 0);
 
-  // 2) 核心类别覆盖盘（检索失败的类别单独保留为「未知」：
-  //    不参与缺失判定，也不计入覆盖率——未知 ≠ 覆盖成功）
+  // 2) 核心类别覆盖盘（检索失败的类别单独保留为「未知」：掩码全 0 = 不产生缺失判定；
+  //    覆盖率只按已判定类别计算——未知 ≠ 覆盖成功）
   const judgedCats = CORE_CATEGORIES.filter((c) => !failedCats.has(c));
   const covered: Record<string, Uint8Array> = {};
   for (const cat of CORE_CATEGORIES) {
     const mask = new Uint8Array(n * n);
     if (failedCats.has(cat)) {
-      // 未知类别：掩码填 1 仅用于「不产生缺失」，覆盖率另按 judgedCats 计算
-      mask.fill(1);
+      // 未知类别：掩码全 0。缺失计数跳过该类（见下），评分与规划经 missingData 跳过
+      // 覆盖率只按已判定类别的并集计算（见 coverageShare 计算处）
     } else {
       const disk = stampDisks(n, byCat[cat] ?? [], coreRadiusM, field, () => 1);
       for (let k = 0; k < n * n; k++) mask[k] = disk[k] > 0 && inCircle(k) ? 1 : 0;
@@ -92,13 +92,13 @@ export function analyzeGaps(
     covered[cat] = mask;
   }
 
-  // 3) 缺失计数与盲区点位
+  // 3) 缺失计数与盲区点位（未知类别跳过缺失判定——无法判断 ≠ 缺失）
   const missingGrid = new Uint8Array(n * n);
   let blindPoints = 0;
   for (let k = 0; k < n * n; k++) {
     if (!inCircle(k)) continue; // 圈外不参与体检
     let miss = 0;
-    for (const cat of CORE_CATEGORIES) if (!covered[cat][k]) miss++;
+    for (const cat of judgedCats) if (!covered[cat][k]) miss++;
     missingGrid[k] = miss;
     if (miss >= 1) blindPoints++;
   }
@@ -205,14 +205,17 @@ export function analyzeGaps(
   patches.sort((a, b) => b.weight - a.weight);
 
   const coverageUnavailable = totalWeight <= 0;
+  // 覆盖率按「已判定核心类别的并集」计算：三件套中任一类未知时，
+  // "全覆盖"结论不可靠——任一已判定类别缺失即计为未覆盖，且标注未知类别
   let covWeight = 0;
   let severeWeight = 0;
   if (!coverageUnavailable) {
     for (let k = 0; k < n * n; k++) {
       const w = weightGrid[k];
       if (w <= 0) continue;
-      if (missingGrid[k] === 0) covWeight += w;
-      if (missingGrid[k] === 3) severeWeight += w;
+      const judgedMiss = judgedCats.filter((cat) => !covered[cat][k]).length;
+      if (judgedMiss === 0) covWeight += w;
+      if (judgedMiss === judgedCats.length) severeWeight += w;
     }
   }
 
@@ -225,8 +228,8 @@ export function analyzeGaps(
     coveredMasks: covered as Record<string, Uint8Array>,
     unknownCategories: CORE_CATEGORIES.filter((c) => failedCats.has(c)),
     patches: patches.slice(0, 8),
-    coverageShare: coverageUnavailable ? null : totalWeight > 0 ? covWeight / totalWeight : null,
-    severeShare: coverageUnavailable ? null : totalWeight > 0 ? severeWeight / totalWeight : null,
+    coverageShare: coverageUnavailable ? null : covWeight / totalWeight,
+    severeShare: coverageUnavailable ? null : severeWeight / totalWeight,
     coverageUnavailable,
     blindPoints
   };

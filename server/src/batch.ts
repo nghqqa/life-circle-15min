@@ -264,6 +264,13 @@ export function startStreetBatch(
             degraded: report.degraded
           });
         } catch (err) {
+          const msg = String((err as Error).message ?? err);
+          // 额度耗尽：立即中止整个任务（后续小区必然同样失败），不再消耗请求
+          if (msg.includes('302') || msg.includes('配额') || msg.includes('限流') || msg.includes('搜索量超限')) {
+            job.status = 'error';
+            job.error = `上游配额耗尽，任务中止于第 ${job.done + 1}/${job.total} 个小区（${p.name}）：${msg}`;
+            return;
+          }
           job.consecutiveFailures++;
           job.communities.push({
             name: p.name,
