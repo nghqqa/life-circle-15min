@@ -23,8 +23,18 @@ export class BaiduServerProvider implements AnalysisProvider {
     const key = `geo:${address}`;
     const hit = this.geoCache.get(key);
     if (hit) return hit;
-    const r = await callBaidu('/geocoding/v3/', { address }, buckets.geo, this.ak);
-    if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? `geocode ${r.body?.status}`);
+    // 街道级地址偶发「无相关结果」：带城市前缀提示提升准确性，失败重试一次
+    const cityHint = (address.match(/^(.*?市)/)?.[1] ?? '').trim();
+    const once = () =>
+      callBaidu(
+        '/geocoding/v3/',
+        cityHint ? { address, city: cityHint } : { address },
+        buckets.geo,
+        this.ak
+      );
+    let r = await once().catch(() => once());
+    if (!r.ok || r.body?.status !== 0) r = await once().catch(() => r);
+    if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `geocode ${r.body?.status}`);
     const loc = { lat: r.body.result.location.lat, lng: r.body.result.location.lng };
     this.geoCache.set(key, loc);
     return loc;
@@ -54,8 +64,13 @@ export class BaiduServerProvider implements AnalysisProvider {
     const key = `place:${JSON.stringify(params)}`;
     const hit = this.placeCache.get(key);
     if (hit) return hit;
-    const r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
-    if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? `place ${r.body?.status}`);
+    // 上游偶发 status=1（Internal Service Error）为瞬态错误：重试两次，配额类错误不重试
+    let r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
+    for (let retry = 0; retry < 2 && this.isTransient(r); retry++) {
+      await new Promise((res) => setTimeout(res, 400 * (retry + 1)));
+      r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
+    }
+    if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `place ${r.body?.status}`);
     const cat = category ?? guessCategory(keyword);
     const pois: Poi[] = (r.body.results ?? [])
       .filter((it: any) => it.location)
@@ -72,6 +87,12 @@ export class BaiduServerProvider implements AnalysisProvider {
     return pois;
   }
 
+  /** 瞬态错误判定：百度 status=1（Internal Service Error）或网络/网关层失败；配额与权限类错误不重试 */
+  private isTransient(r: { ok: boolean; httpStatus: number; body: any }): boolean {
+    if (!r.ok && r.httpStatus >= 500) return true;
+    return r.body?.status === 1;
+  }
+
   async routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]> {
     const out: (RouteProbe | null)[] = new Array(dests.length).fill(null);
     const chunkSize = 20;
@@ -86,13 +107,25 @@ export class BaiduServerProvider implements AnalysisProvider {
         });
         continue;
       }
-      const r = await callBaidu(
+      let r = await callBaidu(
         '/routematrix/v2/walking',
         { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
         buckets.route,
         this.ak
       );
-      if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? `routematrix ${r.body?.status}`);
+      // 瞬态错误（Internal Service Error / 网关失败）重试一次；配额类错误不重试
+      if (!r.ok || r.body?.status !== 0) {
+        if (this.isTransient(r)) {
+          await new Promise((res) => setTimeout(res, 500));
+          r = await callBaidu(
+            '/routematrix/v2/walking',
+            { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
+            buckets.route,
+            this.ak
+          );
+        }
+      }
+      if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `routematrix ${r.body?.status}`);
       const probes: (RouteProbe | null)[] = (r.body.result ?? []).map((row: any) => {
         const d = row?.distance?.value;
         return typeof d === 'number' && d > 0 ? { ok: true, distM: d } : null;

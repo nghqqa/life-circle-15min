@@ -233,11 +233,25 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
       doStart({ lat, lng }, String(address ?? '指定片区'));
       return;
     }
-    callBaidu('/geocoding/v3/', { address: String(address) }, buckets.geo, cfg.akServer).then((r) => {
-      if (!r.ok || r.body?.status !== 0) {
-        res.json({ status: -1, message: r.body?.message ?? '地址解析失败' });
-        return;
-      }
+    // 地理编码对街道级地址偶发「无相关结果」：提取城市前缀作为 city 提示 + 失败重试一次
+    const rawAddress = String(address);
+    const cityHint = (rawAddress.match(/^(.*?市)/)?.[1] ?? '').trim();
+    const geocodeOnce = () =>
+      callBaidu(
+        '/geocoding/v3/',
+        cityHint ? { address: rawAddress, city: cityHint } : { address: rawAddress },
+        buckets.geo,
+        cfg.akServer
+      );
+    geocodeOnce()
+      .catch(() => geocodeOnce())
+      .then((first) => (first.ok && first.body?.status === 0 ? first : geocodeOnce()))
+      .then((r) => {
+        if (!r.ok || r.body?.status !== 0) {
+          console.log(`[batch] geocode fail: http=${r.httpStatus} body=`, JSON.stringify(r.body)?.slice(0, 200));
+          res.json({ status: -1, message: r.body?.message ?? r.body?.msg ?? '地址解析失败' });
+          return;
+        }
       doStart(
         { lat: r.body.result.location.lat, lng: r.body.result.location.lng },
         String(address)

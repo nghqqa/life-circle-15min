@@ -57,35 +57,53 @@ async function searchResidentials(ak: string, center: LatLng, radiusM: number): 
   const hit = cache.get(key);
   if (hit) return hit;
   const pois: Poi[] = [];
+  let quotaExhausted = false;
   for (let page = 0; page < 4; page++) {
-    const r = await callBaidu(
-      '/place/v2/search',
-      {
-        query: '小区',
-        location: `${center.lat},${center.lng}`,
-        radius: String(radiusM),
-        radius_limit: 'true',
-        scope: '2',
-        page_size: '20',
-        page_num: String(page)
-      },
-      buckets.place,
-      ak
-    );
-    if (!r.ok || r.body?.status !== 0) break;
-    const rows = (r.body.results ?? [])
-      .filter((it: any) => it.location)
-      .map((it: any) => ({
-        uid: String(it.uid ?? it.name),
-        name: String(it.name ?? ''),
-        lat: it.location.lat,
-        lng: it.location.lng,
-        category: 'residential' as const,
-        address: it.address,
-        source: 'server' as const
-      }));
+    let rows: Poi[] | null = null;
+    // 上游偶发 Internal Service Error：每页最多重试 3 次
+    for (let attempt = 0; attempt < 3 && !rows; attempt++) {
+      if (attempt > 0) await new Promise((res) => setTimeout(res, 400 * attempt));
+      const r = await callBaidu(
+        '/place/v2/search',
+        {
+          query: '小区',
+          location: `${center.lat},${center.lng}`,
+          radius: String(radiusM),
+          radius_limit: 'true',
+          scope: '2',
+          page_size: '20',
+          page_num: String(page)
+        },
+        buckets.place,
+        ak
+      );
+      if (r.ok && r.body?.status === 0) {
+        rows = (r.body.results ?? [])
+          .filter((it: any) => it.location)
+          .map((it: any) => ({
+            uid: String(it.uid ?? it.name),
+            name: String(it.name ?? ''),
+            lat: it.location.lat,
+            lng: it.location.lng,
+            category: 'residential' as const,
+            address: it.address,
+            source: 'server' as const
+          }));
+      } else if (r.body?.status === 302) {
+        quotaExhausted = true;
+        break; // 天配额超限：非瞬态，提示用户明日重试
+      } else if (r.body?.status !== 1 && r.httpStatus < 500) {
+        break; // 其他非瞬态错误不再重试
+      }
+    }
+    if (!rows || rows.length === 0) break;
     pois.push(...rows);
     if (rows.length < 20) break;
+  }
+  if (!pois.length && quotaExhausted) {
+    job.status = 'error';
+    job.error = '百度检索当日配额已耗尽（status 302），请明日重试或更换配额更高的 AK';
+    return;
   }
   const cleaned = dedupePois(pois);
   cache.set(key, cleaned);
