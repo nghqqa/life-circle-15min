@@ -8,14 +8,14 @@ import type { GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
  * 等时环/盲区轮廓为矢量折线，POI/规划点为标注。
  */
 
-export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan';
+export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'batch';
 
 export class MapView {
   map: any = null;
   ready = false;
 
-  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [] };
-  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true };
+  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], batch: [] };
+  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, batch: true };
   private data: Record<string, any> = {};
   private centerMarker: any = null;
 
@@ -113,6 +113,12 @@ export class MapView {
   setPlanSites(sites: PlanSite[]) {
     this.data.plan = sites;
     this.renderLayer('plan');
+  }
+
+  /** 街道级批量结果：按等级着色的小区标注（点击弹出摘要） */
+  setBatchResults(communities: { name: string; center: LatLng; score: number; grade: string; coverageShare: number; dominantMissing: string | null }[]) {
+    this.data.batch = communities;
+    this.renderLayer('batch');
   }
 
   toggleLayer(key: LayerKey, on: boolean) {
@@ -245,6 +251,26 @@ export class MapView {
         });
         map.addOverlay(circle);
         this.overlays.plan.push(circle);
+      }
+    }
+
+    if (key === 'batch' && this.data.batch) {
+      const gradeColor: Record<string, string> = {
+        A: '#2f9e44', B: '#74b816', C: '#f08c00', D: '#e8590c', E: '#e03131', '-': '#8a93a6'
+      };
+      for (const c of this.data.batch as any[]) {
+        const pt = new BMapGL.Point(c.center.lng, c.center.lat);
+        const color = gradeColor[c.grade] ?? '#8a93a6';
+        const marker = new BMapGL.Marker(pt, { icon: iconFor(color, c.grade === '-' ? '?' : String(c.grade)) });
+        const summary = c.score >= 0
+          ? `<b>${c.name}</b><br/>评分 ${c.score}（${c.grade} 级）· 人口覆盖率 ${Math.round(c.coverageShare * 100)}%${c.dominantMissing ? `<br/>主要缺失：${catName(c.dominantMissing)}` : ''}`
+          : `<b>${c.name}</b><br/>分析失败`;
+        marker.addEventListener('click', () => {
+          const info = new BMapGL.InfoWindow(`<div style="font-size:13px;min-width:200px">${summary}</div>`, { width: 240 });
+          map.openInfoWindow(info, pt);
+        });
+        map.addOverlay(marker);
+        this.overlays.batch.push(marker);
       }
     }
   }

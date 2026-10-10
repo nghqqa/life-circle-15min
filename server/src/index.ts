@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import { loadConfig } from './config.js';
-import { createApiRouter } from './routes.js';
+import { createApiRouter, createAnalysisRouter } from './routes.js';
 import { IpLimiter } from './ratelimit.js';
 
 const cfg = loadConfig();
@@ -38,6 +38,7 @@ app.get('/api/config', (_req, res) => {
 });
 
 app.use('/api/baidu', createApiRouter(cfg));
+app.use('/api', createAnalysisRouter(cfg));
 
 // 生产模式：托管前端构建产物
 const staticDir = path.isAbsolute(cfg.staticDir) ? cfg.staticDir : path.resolve(process.cwd(), cfg.staticDir);

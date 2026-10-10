@@ -227,6 +227,9 @@ table.tbl .dot { display: inline-block; width: 8px; height: 8px; border-radius: 
 
 .plan-card { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; font-size: 12.5px; background: #fff; transition: border-color 0.15s, box-shadow 0.15s; }
 .plan-card:hover { border-color: var(--accent); box-shadow: var(--shadow-1); }
+.plan-card.accepted { border-color: var(--ok); background: var(--ok-soft); }
+.plan-card.skipped { opacity: 0.62; }
+.btn-busy { opacity: 0.6; pointer-events: none; }
 .plan-card h4 { margin: 0 0 6px; font-size: 13px; display: flex; align-items: center; gap: 7px; }
 .plan-card .rank { background: var(--accent); color: #fff; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: 0 0 auto; }
 .gain-chip {

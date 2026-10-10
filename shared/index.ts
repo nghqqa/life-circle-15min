@@ -10,3 +10,4 @@ export * from './scoring.js';
 export * from './checklist.js';
 export * from './planner.js';
 export * from './mock.js';
+export * from './analyze.js';

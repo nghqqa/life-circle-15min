@@ -1,7 +1,33 @@
 import { CATEGORY_MAP, CORE_CATEGORIES, THRESHOLDS } from './config.js';
 import { localDistM } from './geo.js';
 import { latOfRow, lngOfCol } from './timefield.js';
-import type { GapAnalysis, PlanSite, TimeField } from './types.js';
+import type { GapAnalysis, LatLng, PlanSite, TimeField } from './types.js';
+
+/** 把一个已采纳的补点写入覆盖掩码副本（交互式工作台）：其服务盘内该类别视为已覆盖 */
+export function applySiteCoverage(
+  masks: Record<string, Uint8Array>,
+  category: string,
+  site: LatLng,
+  field: TimeField,
+  radiusM = THRESHOLDS.coreRadiusM
+): void {
+  const mask = masks[category];
+  if (!mask) return;
+  const n = field.n;
+  const extentM = (field.latMax - field.center.lat) * 2 * 111320;
+  const stepM = extentM / (n - 1);
+  const stepLat = stepM / 111320;
+  const stepLng = stepM / (111320 * Math.cos((site.lat * Math.PI) / 180));
+  const ci = Math.round((field.latMax - site.lat) / stepLat);
+  const cj = Math.round((site.lng - field.lngMin) / stepLng);
+  const rCells = Math.ceil(radiusM / stepM);
+  for (let i = Math.max(0, ci - rCells); i <= Math.min(n - 1, ci + rCells); i++) {
+    for (let j = Math.max(0, cj - rCells); j <= Math.min(n - 1, cj + rCells); j++) {
+      const d = Math.hypot((ci - i) * stepM, (cj - j) * stepM);
+      if (d <= radiusM) mask[i * n + j] = 1;
+    }
+  }
+}
 
 /**
  * 补点选址引擎（贪心最大覆盖）—— 赛题标题里"规划助手"的落点：

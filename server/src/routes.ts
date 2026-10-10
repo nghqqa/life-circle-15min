@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
 import { buckets, callBaidu } from './baidu.js';
+import { analyzeWithServerProvider } from './provider.js';
+import { startStreetBatch, getJob, sweepJobs } from './batch.js';
 
 /**
  * 百度 Web API 代理：
@@ -174,6 +176,188 @@ export function createApiRouter(cfg: ServerConfig): Router {
         geo: caches.geo.stats()
       }
     });
+  });
+
+  return router;
+}
+
+/**
+ * 分析 API 路由（挂载于 /api）：
+ * 单点体检 / 街道批量 / OpenAPI 文档。此路由不做「必须有 AK」的硬拦截——
+ * 未配置 AK 时各接口返回优雅降级错误，便于评审零配置体验。
+ */
+export function createAnalysisRouter(cfg: ServerConfig): Router {
+  const router = Router();
+
+  // ================= 分析 API（面向多端 / 批量任务的地基） =================
+
+  // POST /api/analyze  {lat?, lng?, address?, persona?, minutes?} → 完整体检报告 JSON
+  router.post('/analyze', (req, res) => {
+    const { lat, lng, address, persona, minutes } = req.body ?? {};
+    if (!address && (typeof lat !== 'number' || typeof lng !== 'number')) {
+      res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
+      return;
+    }
+    analyzeWithServerProvider(
+      {
+        center: typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined,
+        address: typeof address === 'string' && address ? address : undefined,
+        persona: persona ?? 'adult',
+        minutes: Number(minutes) || 15
+      },
+      cfg.akServer
+    )
+      .then((report) => res.json({ status: 0, report }))
+      .catch((err) => res.json({ status: -1, message: String(err?.message ?? err) }));
+  });
+
+  // POST /api/batch/street  {address|lat/lng, radiusM?, maxCommunities?} → {jobId}
+  router.post('/batch/street', (req, res) => {
+    const { lat, lng, address, radiusM, maxCommunities } = req.body ?? {};
+    if (!address && (typeof lat !== 'number' || typeof lng !== 'number')) {
+      res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
+      return;
+    }
+    sweepJobs();
+    const doStart = (center: { lat: number; lng: number }, name: string) => {
+      const job = startStreetBatch(
+        cfg.akServer,
+        center,
+        name,
+        Math.min(3000, Math.max(800, Number(radiusM) || 2500)),
+        Math.min(16, Math.max(3, Number(maxCommunities) || 10))
+      );
+      res.json({ status: 0, jobId: job.id, total: job.total });
+    };
+    if (typeof lat === 'number' && typeof lng === 'number') {
+      doStart({ lat, lng }, String(address ?? '指定片区'));
+      return;
+    }
+    callBaidu('/geocoding/v3/', { address: String(address) }, buckets.geo, cfg.akServer).then((r) => {
+      if (!r.ok || r.body?.status !== 0) {
+        res.json({ status: -1, message: r.body?.message ?? '地址解析失败' });
+        return;
+      }
+      doStart(
+        { lat: r.body.result.location.lat, lng: r.body.result.location.lng },
+        String(address)
+      );
+    });
+  });
+
+  // GET /api/batch/status/:jobId → 任务进度与结果
+  router.get('/batch/status/:jobId', (req, res) => {
+    const job = getJob(String(req.params.jobId));
+    if (!job) {
+      res.status(404).json({ status: -1, message: '任务不存在' });
+      return;
+    }
+    const { communities, summary, ...rest } = job;
+    res.json({ status: 0, job: { ...rest, communities, summary } });
+  });
+
+  // OpenAPI 描述（供 /docs 与多端接入）
+  router.get('/openapi.json', (_req, res) => {
+    res.json({
+      openapi: '3.0.0',
+      info: {
+        title: '15 分钟生活圈 · 智能体检与规划助手 API',
+        version: '0.1.0',
+        description: '服务端分析引擎：单点完整体检 + 街道级批量体检。所有接口经服务端 AK 调用百度 Web API，带缓存与限流。'
+      },
+      paths: {
+        '/api/analyze': {
+          post: {
+            summary: '单点完整体检',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      lat: { type: 'number' },
+                      lng: { type: 'number' },
+                      address: { type: 'string' },
+                      persona: { type: 'string', enum: ['adult', 'elderly', 'child'] },
+                      minutes: { type: 'number', enum: [5, 10, 15] }
+                    }
+                  }
+                }
+              }
+            },
+            responses: { '200': { description: '体检报告 JSON（degraded=true 表示上游降级）' } }
+          }
+        },
+        '/api/batch/street': {
+          post: {
+            summary: '发起街道级批量体检任务',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      address: { type: 'string' },
+                      lat: { type: 'number' },
+                      lng: { type: 'number' },
+                      radiusM: { type: 'number' },
+                      maxCommunities: { type: 'number' }
+                    }
+                  }
+                }
+              }
+            },
+            responses: { '200': { description: '返回 jobId' } }
+          }
+        },
+        '/api/batch/status/{jobId}': {
+          get: {
+            summary: '查询批量任务进度与结果',
+            parameters: [{ name: 'jobId', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: { '200': { description: '任务状态、逐小区结果与街道汇总' } }
+          }
+        },
+        '/api/baidu/geocoding/v3': { get: { summary: '地理编码代理' } },
+        '/api/baidu/reverse_geocoding/v3': { get: { summary: '逆地理编码代理' } },
+        '/api/baidu/place/v2/search': { get: { summary: 'POI 圆形区域检索代理' } },
+        '/api/baidu/routematrix/v2/walking': { get: { summary: '批量步行算路代理（自动分片合并）' } },
+        '/api/baidu/direction/v2/walking': { get: { summary: '单路径步行规划代理' } },
+        '/api/health': { get: { summary: '健康检查' } }
+      }
+    });
+  });
+
+  // 极简 API 文档页
+  router.get('/docs', (_req, res) => {
+    res.type('html').send(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>API 文档 · 15分钟生活圈</title>
+<style>body{font-family:system-ui,sans-serif;max-width:860px;margin:32px auto;padding:0 16px;line-height:1.7;color:#1c2333}
+code,pre{background:#f4f6fa;border-radius:6px;padding:2px 6px}pre{padding:12px;overflow:auto}
+h1{font-size:22px}h2{font-size:17px;border-bottom:1px solid #e4e8f0;padding-bottom:6px;margin-top:28px}
+</style></head><body>
+<h1>15 分钟生活圈 · 分析 API</h1>
+<p>机器可读描述：<a href="/api/openapi.json">/api/openapi.json</a>（可导入 Swagger UI / Apifox）</p>
+<h2>POST /api/analyze — 单点完整体检</h2>
+<pre>curl -X POST http://localhost:8787/api/analyze \\
+  -H "Content-Type: application/json" \\
+  -d '{"address":"江西省上饶市江西师范大学数字产业学院","persona":"adult","minutes":15}'</pre>
+<p>返回：<code>status</code>、<code>report.score</code>（总分/等级/四维）、<code>report.gap</code>（盲区与斑块）、
+<code>report.planSites</code>（补点建议）、<code>report.checklist</code>（国标清单）、<code>report.rings</code>（等时环坐标）。
+<code>report.degraded=true</code> 表示上游降级（结果为兜底口径）。</p>
+<h2>POST /api/batch/street — 街道级批量体检</h2>
+<pre>curl -X POST http://localhost:8787/api/batch/street \\
+  -H "Content-Type: application/json" \\
+  -d '{"address":"上饶市信州区东市街道","radiusM":2500,"maxCommunities":10}'</pre>
+<p>返回 <code>jobId</code>。任务后台串行执行（受上游限流，首次约 1-3 分钟）。</p>
+<h2>GET /api/batch/status/:jobId — 查询进度</h2>
+<pre>curl http://localhost:8787/api/batch/status/&lt;jobId&gt;</pre>
+<p>返回 <code>job.done/total/current</code> 进度，完成后附 <code>job.summary</code>（平均分/等级分布/最优最差）
+与 <code>job.communities[]</code>（逐小区评分排名）。</p>
+<h2>百度 Web API 代理</h2>
+<p>/api/baidu/geocoding/v3 · /api/baidu/reverse_geocoding/v3 · /api/baidu/place/v2/search ·
+/api/baidu/routematrix/v2/walking · /api/baidu/direction/v2/walking —— 参数与百度官方一致，
+AK 由服务端注入，带缓存与限流。</p>
+</body></html>`);
   });
 
   return router;
