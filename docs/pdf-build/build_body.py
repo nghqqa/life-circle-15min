@@ -427,7 +427,7 @@ para(story, '后续规划：①配合百度开放平台配额提升，开放城�
             '多模式出行规划；④沉淀为面向街道办的轻量 SaaS 工具，让「15 分钟生活圈」的体检与治理'
             '成为社区工作的日常动作。')
 story.append(Spacer(1, 20))
-story.append(Paragraph('—— 圈点项目团队 · 2026 年 10 月', ParagraphStyle(
+story.append(Paragraph('—— 圈点项目团队　邱全安 / 童梓荣 / 彭明 · 2026 年 10 月', ParagraphStyle(
     'Sign', fontName=BODY_FONT, fontSize=10, leading=14, textColor=TEXT_MUTED, alignment=TA_CENTER)))
 
 doc.multiBuild(story, onFirstPage=on_page, onLaterPages=on_page)
