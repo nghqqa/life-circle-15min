@@ -71,16 +71,15 @@ export function planFacilitiesFromCoverage(
     return totalWeight > 0 ? w / totalWeight : 1;
   };
 
-  // 候选点：斑块主导缺失类别下、缺失该类的斑块格，按步长抽样
+  // 候选点：所有「有居住权重且缺失任一核心设施」的格点（含单缺场景），
+  // 按步长抽样去密；每个候选对其缺失的每个核心类别各生成一条（贪心按收益择优）
   const candidates: { k: number; cat: string }[] = [];
   const stride = Math.max(1, Math.round(R / stepM / 3));
-  for (const patch of gap.patches) {
-    for (const k of patch.cells) {
-      if (k % (stride * 7) !== 0) continue; // 稳定抽样
-      const missingHere = CORE_CATEGORIES.filter((c) => cov[c][k] === 0);
-      const cat = missingHere.includes(patch.dominant) ? patch.dominant : missingHere[0];
-      if (cat) candidates.push({ k, cat });
-    }
+  for (let k = 0; k < n * n; k++) {
+    if (weight[k] <= 0) continue;
+    if (k % (stride * stride) !== 0) continue; // 稳定抽样去密
+    const missingHere = CORE_CATEGORIES.filter((c) => cov[c][k] === 0);
+    for (const cat of missingHere) candidates.push({ k, cat });
   }
 
   const sites: PlanSite[] = [];

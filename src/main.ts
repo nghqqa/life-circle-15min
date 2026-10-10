@@ -28,7 +28,7 @@ import { ClientGateway, GatewayChain, MockGateway, ServerGateway, makeProbeDesti
 import { fieldToDataUrl } from './fieldRender.js';
 import { Hud, banner, CHANNEL_LABEL } from './hud.js';
 import { MapView, type LayerKey } from './map.js';
-import { setResult, switchTab } from './panels.js';
+import { getWorkbenchState, setResult, switchTab } from './panels.js';
 
 // ---------- 全局状态 ----------
 
@@ -492,6 +492,11 @@ function exportJson() {
     model: { dirs: r.model.dirs, probeM: r.model.probeM, factors: r.model.factors, radiusM: r.model.radiusM, degradedDirs: r.model.degradedDirs },
     score: r.score,
     checklist: r.checklist,
+    cumulative: r.cumulative,
+    accuracy: r.accuracy,
+    warnings: r.warnings,
+    failedCategories: r.failedCategories,
+    workbench: getWorkbenchState(),
     gap: {
       blindPoints: r.gap.blindPoints,
       coverageShare: r.gap.coverageShare,

@@ -55,7 +55,8 @@ export function buildIsochroneModel(
     // 探针按方向序号一一对应；缺失/失败的方向用道路网格谐波模型合成
     const p = i < probes.length ? probes[i] : null;
     if (p && p.ok && p.distM > 30) {
-      factors[i] = clamp(p.distM / probeM, 0.95, 2.5);
+      // 上限 4.0：强阻隔方向（高速/铁路围合）真实绕行可达 3-4，钳 2.5 会高估可达范围
+      factors[i] = clamp(p.distM / probeM, 0.95, 4.0);
     } else {
       factors[i] = syntheticFactor(theta);
       degraded++;

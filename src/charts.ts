@@ -34,7 +34,7 @@ export function renderCharts(result: AnalysisResult) {
             value: [
               round2(result.score.dims.completeness),
               round2(result.score.dims.proximity),
-              round2(result.score.dims.coverage),
+              round2(result.score.dims.coverage ?? 0),
               round2(result.score.dims.diversity)
             ],
             name: '体检得分',

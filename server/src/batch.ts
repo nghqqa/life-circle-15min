@@ -39,7 +39,7 @@ export interface StreetGroup {
 
 export interface BatchJob {
   id: string;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'cancelled';
   createdAt: number;
   centerName: string;
   center: LatLng;
@@ -47,6 +47,10 @@ export interface BatchJob {
   total: number;
   done: number;
   current: string;
+  /** 上游请求预算（含重试的粗上界）：社区数 × 40 */
+  requestBudget: number;
+  requestCount: number;
+  consecutiveFailures: number;
   communities: BatchCommunityResult[];
   summary: {
     avgScore: number;
@@ -60,6 +64,7 @@ export interface BatchJob {
     /** 城区级试点：按街道分组的聚合排名 */
     streetGroups: StreetGroup[];
   } | null;
+  cancelled?: boolean;
   error?: string;
 }
 
@@ -69,7 +74,12 @@ function jobId(): string {
   return `bj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function searchResidentials(ak: string, center: LatLng, radiusM: number): Promise<{ pois: Poi[]; quotaExhausted: boolean }> {
+async function searchResidentials(
+  ak: string,
+  center: LatLng,
+  radiusM: number,
+  job: BatchJob
+): Promise<{ pois: Poi[]; quotaExhausted: boolean }> {
   const cache = new TtlCache<Poi[]>(6 * 3600_000, 500);
   const key = `res:${center.lat.toFixed(4)},${center.lng.toFixed(4)}:${radiusM}`;
   const hit = cache.get(key);
@@ -77,10 +87,12 @@ async function searchResidentials(ak: string, center: LatLng, radiusM: number): 
   const pois: Poi[] = [];
   let quotaExhausted = false;
   for (let page = 0; page < 4; page++) {
+    if (job.cancelled) return { pois: [], quotaExhausted: false };
     let rows: Poi[] | null = null;
     // 上游偶发 Internal Service Error：每页最多重试 3 次
     for (let attempt = 0; attempt < 3 && !rows; attempt++) {
       if (attempt > 0) await new Promise((res) => setTimeout(res, 400 * attempt));
+      job.requestCount++;
       const r = await callBaidu(
         '/place/v2/search',
         {
@@ -178,6 +190,9 @@ export function startStreetBatch(
     total: 0,
     done: 0,
     current: '检索片区内住宅小区…',
+    requestBudget: maxCommunities * 40,
+    requestCount: 0,
+    consecutiveFailures: 0,
     communities: [],
     summary: null
   };
@@ -185,7 +200,7 @@ export function startStreetBatch(
 
   void (async () => {
     try {
-      const { pois: residentials, quotaExhausted } = await searchResidentials(ak, center, radiusM);
+      const { pois: residentials, quotaExhausted } = await searchResidentials(ak, center, radiusM, job);
       if (quotaExhausted) {
         job.status = 'error';
         job.error = '百度检索当日配额已耗尽（status 302），请明日重试或更换配额更高的 AK';
@@ -204,12 +219,30 @@ export function startStreetBatch(
         return;
       }
       for (const p of filtered) {
+        if (job.cancelled) {
+          job.status = 'cancelled';
+          job.error = '任务已取消';
+          return;
+        }
+        if (job.requestCount > job.requestBudget) {
+          job.status = 'error';
+          job.error = `已超出请求预算（${job.requestBudget} 次上游调用），任务中止以保护配额`;
+          return;
+        }
+        if (job.consecutiveFailures >= 5) {
+          job.status = 'error';
+          job.error = '连续 5 个小区分析失败，上游可能不可用，任务中止';
+          return;
+        }
         job.current = p.name;
+        const before = job.requestCount;
         try {
           const report = await analyzeWithServerProvider(
             { center: { lat: p.lat, lng: p.lng }, persona: 'adult', minutes: 15 },
             ak
           );
+          job.requestCount = before + 30; // 单社区约 12 检索 + 3 算路（含重试余量）
+          job.consecutiveFailures = 0;
           job.communities.push({
             name: report.centerName.includes(',') ? p.name : report.centerName,
             street: extractStreet(report.centerName),
@@ -226,6 +259,8 @@ export function startStreetBatch(
             degraded: report.degraded
           });
         } catch (err) {
+          job.requestCount = before + 30;
+          job.consecutiveFailures++;
           job.communities.push({
             name: p.name,
             street: extractStreet(p.name),
@@ -295,6 +330,13 @@ export function startStreetBatch(
 
 export function getJob(id: string): BatchJob | undefined {
   return jobs.get(id);
+}
+
+export function cancelJob(id: string): boolean {
+  const job = jobs.get(id);
+  if (!job) return false;
+  job.cancelled = true;
+  return true;
 }
 
 /** 清理超过 2 小时的旧任务 */

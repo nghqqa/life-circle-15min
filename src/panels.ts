@@ -37,6 +37,21 @@ export function setResult(r: AnalysisResult | null) {
   currentResult = r;
 }
 
+/** 工作台决策快照（导出 JSON 时随报告持久化） */
+export function getWorkbenchState() {
+  return {
+    acceptedSites: acceptedSites.map((s) => ({
+      category: s.category,
+      latLng: s.latLng,
+      coveredCells: s.coveredCells,
+      beforePct: s.beforePct,
+      afterPct: s.afterPct
+    })),
+    rejectedSites: rejectedSites.map((s) => ({ category: s.category, latLng: s.latLng })),
+    currentSuggestions: currentResult ? currentSites(currentResult).length : 0
+  };
+}
+
 export function switchTab(tab: string) {
   currentTab = tab;
   document.querySelectorAll('#panel-tabs button').forEach((b) => {
@@ -108,15 +123,20 @@ function gradeColor(grade: string): string {
 function reportHtml(r: AnalysisResult): string {
   const g = r.score.grade;
   const dim = r.score.dims;
+  const cum = r.cumulative;
+  const cumBy = cum?.byCategory ?? {};
   const rows = r.score.details
-    .map(
-      (d) => `<tr>
-        <td><span class="dot" style="background:${CATEGORY_MAP[d.category].color}"></span>${d.name}</td>
+    .map((d) => {
+      const inCircle = d.category === 'residential' ? '—' : String(cumBy[d.category] ?? 0);
+      const missingTag = d.missingData ? ' <span class="pill mid">检索失败</span>' : '';
+      return `<tr>
+        <td><span class="dot" style="background:${CATEGORY_MAP[d.category].color}"></span>${d.name}${missingTag}</td>
         <td class="num">${d.count}</td>
+        <td class="num">${inCircle}</td>
         <td class="num">${d.nearestM != null ? d.nearestM + 'm' : '—'}</td>
-        <td class="num">${Math.round(d.completeness * 100)}%</td>
-      </tr>`
-    )
+        <td class="num">${d.missingData ? '—' : Math.round(d.completeness * 100) + '%'}</td>
+      </tr>`;
+    })
     .join('');
   return `
   <div class="rpt-grade">
@@ -130,18 +150,21 @@ function reportHtml(r: AnalysisResult): string {
   <div class="kpi-row">
     <div class="kpi"><b>${Math.round(dim.completeness * 100)}</b><span>完整度</span></div>
     <div class="kpi"><b>${Math.round(dim.proximity * 100)}</b><span>临近度</span></div>
-    <div class="kpi"><b>${Math.round(dim.coverage * 100)}</b><span>人口覆盖率</span></div>
+    <div class="kpi"><b>${r.score.coverageUnavailable ? '—' : Math.round((dim.coverage ?? 0) * 100)}</b><span>人口覆盖率${r.score.coverageUnavailable ? '（无法评估）' : ''}</span></div>
   </div>
   ${r.cumulative ? `<div class="rpt-sub" style="margin:-6px 0 10px">累积机会（学界标准口径）：${r.minutes} 分钟步行圈可抵达设施 <b>${r.cumulative.total}</b> 处 · 覆盖 <b>${r.cumulative.categoriesCovered}</b>/10 类${r.cumulative.missingCategories.length ? ' · 圈内缺失：' + r.cumulative.missingCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c).join('、') : ''}</div>` : ''}
   ${r.accuracy && r.accuracy.samples > 0 ? `<div class="rpt-sub" style="margin:-6px 0 10px">插值精度自证：抽样 ${r.accuracy.samples} 个真实算路点，模型估计平均绝对误差 <b>${r.accuracy.maeMinutes} 分钟（${r.accuracy.maePercent}%）</b>，最大偏差 ${r.accuracy.worstPercent}%</div>` : ''}
+  ${r.warnings?.length ? `<div class="rpt-summary" style="background:var(--warn-soft)"><span class="sum-label" style="color:var(--warn)">口径与警告</span>${r.warnings.map((w) => escapeHtml(w)).join('；')}</div>` : ''}
   <div class="rpt-summary"><span class="sum-label">诊断</span>${escapeHtml(r.score.summary)}</div>
+  ${r.score.missingDataCategories?.length ? `<div class="rpt-sub" style="margin:-8px 0 10px;color:var(--warn)">※ ${r.score.missingDataCategories.join('、')}检索失败——相关数量为「数据缺失」而非真实结论，未计入评分。</div>` : ''}
   <div class="sec-title">四维体检（雷达）</div>
   <div id="chart-radar" class="chart-box"></div>
   <div class="sec-title">设施完整度（柱状：实际 vs 理想）</div>
   <div id="chart-bar" class="chart-box"></div>
   <div class="sec-title">分类明细</div>
+  <div class="rpt-sub" style="margin-bottom:4px">口径说明：「数量」为 2km 半径检索所得（周边统计）；「圈内可达」为步行 ${r.minutes} 分钟内真实可抵（时间场判定）；「1km 盲区」为评分细则口径（直线）。</div>
   <table class="tbl">
-    <thead><tr><th>类别</th><th>数量</th><th>最近</th><th>完整度</th></tr></thead>
+    <thead><tr><th>类别</th><th>数量</th><th>圈内可达</th><th>最近</th><th>完整度</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <div class="sec-title">过街便利度</div>
@@ -501,7 +524,7 @@ function updateStreetStatus() {
     <td class="num">${g.weakCount || '—'}</td>
     <td class="num">${g.bestScore}　</td><td class="num">${g.worstScore}</td></tr>`).join('')}</tbody></table>` : ''}
   ${communityTable(s.communities)}
-  <div class="rpt-sub">说明：小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
+  <div class="rpt-sub">说明：排名为<b>片区抽样口径</b>（采样半径内住宅小区），非行政街道全域普查；小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
 }
 
 function communityTable(communities: StreetCommunity[]): string {

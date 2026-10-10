@@ -83,7 +83,7 @@
 [![圈点·核心功能演示](docs/data/screenshots/A-adult.png)](docs/video/圈点-核心功能演示.mp4)
 
 ▶ [docs/video/圈点-核心功能演示.mp4](docs/video/圈点-核心功能演示.mp4)（52 秒，无声走查版：
-定位 → 48 向真实路网体检 → 热力面/盲区 → 规划建议采纳 → 国标清单 → 老年人视角对比。
+定位 → 48 向真实路网体检 → 热力面/盲区 → 规划建议采纳 → 对标清单 → 老年人视角对比。
 配音解说版按 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) 分镜录制。）
 
 ## 这是什么

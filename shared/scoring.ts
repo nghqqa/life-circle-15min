@@ -14,14 +14,29 @@ function proximityFromDistance(d: number | null): number {
   return 0;
 }
 
-export function computeScore(center: LatLng, pois: Poi[], gap: GapAnalysis): ScoreResult {
+export interface ScoreOptions {
+  /**
+   * 检索失败的类别：这些类别数量为 0 属「数据缺失」而非「真实没有」，
+   * 不参与加权评分（权重重新归一），但在明细中标注 missingData。
+   */
+  failedCategories?: string[];
+}
+
+export function computeScore(
+  center: LatLng,
+  pois: Poi[],
+  gap: GapAnalysis,
+  opts: ScoreOptions = {}
+): ScoreResult {
+  const failed = new Set<string>(opts.failedCategories ?? []);
   const byCat: Record<string, Poi[]> = {};
   for (const p of pois) (byCat[p.category] ??= []).push(p);
 
   const scored = CATEGORIES.filter((c) => c.scored);
   const details: ScoreDimDetail[] = scored.map((c) => {
-    const list = byCat[c.id] ?? [];
-    const nearest = nearestPoiM(center, list);
+    const missingData = failed.has(c.id);
+    const list = missingData ? [] : (byCat[c.id] ?? []);
+    const nearest = list.length ? nearestPoiM(center, list) : null;
     return {
       category: c.id,
       name: c.name,
@@ -29,17 +44,24 @@ export function computeScore(center: LatLng, pois: Poi[], gap: GapAnalysis): Sco
       ideal: c.ideal,
       completeness: c.ideal > 0 ? Math.min(1, list.length / c.ideal) : 1,
       nearestM: nearest ? Math.round(nearest.distM) : null,
-      proximity: proximityFromDistance(nearest ? nearest.distM : null)
+      proximity: proximityFromDistance(nearest ? nearest.distM : null),
+      missingData
     };
   });
 
-  const wSum = scored.reduce((a, c) => a + c.weight, 0);
-  const completeness = details.reduce((a, d) => a + d.completeness * CATEGORY_MAP[d.category].weight, 0) / wSum;
-  const proximity = details.reduce((a, d) => a + d.proximity * CATEGORY_MAP[d.category].weight, 0) / wSum;
-  const coverage = gap.totalWeight > 0 ? gap.coverageShare : 0;
+  // 数据缺失的类别不参与加权（区分「数据缺失」与「真实为 0」），权重重新归一
+  const counted = details.filter((d) => !d.missingData);
+  const wSum = counted.reduce((a, d) => a + CATEGORY_MAP[d.category].weight, 0) || 1;
+  const completeness =
+    counted.reduce((a, d) => a + d.completeness * CATEGORY_MAP[d.category].weight, 0) / wSum;
+  const proximity =
+    counted.reduce((a, d) => a + d.proximity * CATEGORY_MAP[d.category].weight, 0) / wSum;
 
-  // 多样性：香农熵（对类别数量分布）
-  const counts = details.map((d) => d.count);
+  // 人口覆盖：无居住采样时无法评估（置空，并从总分加权中剔除该维度）
+  const coverageAvailable = gap.totalWeight > 0;
+  const coverage = coverageAvailable ? gap.coverageShare : null;
+
+  const counts = counted.map((d) => d.count);
   const countTotal = counts.reduce((a, b) => a + b, 0);
   let diversity = 0;
   if (countTotal > 0) {
@@ -52,27 +74,61 @@ export function computeScore(center: LatLng, pois: Poi[], gap: GapAnalysis): Sco
     diversity = h / Math.log(counts.length);
   }
 
-  const totalScore =
-    completeness * 0.3 + proximity * 0.35 + coverage * 0.2 + diversity * 0.15;
+  // 总分：可用维度加权后归一（缺失维度不拉低总分）
+  const parts: [number, number][] = [
+    [completeness, 0.3],
+    [proximity, 0.35],
+    [diversity, 0.15]
+  ];
+  let weightSum = 0.8;
+  if (coverage != null) {
+    parts.push([coverage, 0.2]);
+    weightSum = 1;
+  }
+  const totalScore = parts.reduce((a, [v, w]) => a + v * w, 0) / weightSum;
   const total = Math.round(totalScore * 100);
   const grade =
-    total >= GRADE_THRESHOLDS.A ? 'A' : total >= GRADE_THRESHOLDS.B ? 'B' : total >= GRADE_THRESHOLDS.C ? 'C' : total >= GRADE_THRESHOLDS.D ? 'D' : 'E';
+    total >= GRADE_THRESHOLDS.A
+      ? 'A'
+      : total >= GRADE_THRESHOLDS.B
+        ? 'B'
+        : total >= GRADE_THRESHOLDS.C
+          ? 'C'
+          : total >= GRADE_THRESHOLDS.D
+            ? 'D'
+            : 'E';
 
-  const zeroCats = details.filter((d) => d.count === 0).map((d) => d.name);
-  const weak = [...details].sort((a, b) => a.completeness * CATEGORY_MAP[a.category].weight - b.completeness * CATEGORY_MAP[b.category].weight)[0];
+  const missingDataNames = details.filter((d) => d.missingData).map((d) => d.name);
+  const zeroCats = details.filter((d) => !d.missingData && d.count === 0).map((d) => d.name);
+  const weak = [...counted].sort(
+    (a, b) => a.completeness * CATEGORY_MAP[a.category].weight - b.completeness * CATEGORY_MAP[b.category].weight
+  )[0];
   const summaryParts: string[] = [];
-  if (zeroCats.length) summaryParts.push(`圈内完全没有：${zeroCats.join('、')}`);
+  if (missingDataNames.length) summaryParts.push(`检索失败（数据缺失，无法判断）：${missingDataNames.join('、')}`);
+  if (zeroCats.length) summaryParts.push(`确认圈内没有：${zeroCats.join('、')}`);
   if (gap.patches.length) {
     const top = gap.patches[0];
     summaryParts.push(
       `最大灰色区域位于${bearingName(center, top.centroid)}方向，覆盖约 ${(top.weightShare * 100).toFixed(0)}% 居住权重，主要缺${CATEGORY_MAP[top.dominant].name}`
     );
   }
-  if (gap.severeShare > 0.05) summaryParts.push(`重度缺失（三类全无）居住权重占 ${(gap.severeShare * 100).toFixed(0)}%`);
+  if (coverageAvailable && gap.severeShare > 0.05)
+    summaryParts.push(`重度缺失（三类全无）居住权重占 ${(gap.severeShare * 100).toFixed(0)}%`);
+  if (gap.totalWeight === 0) summaryParts.push('片区内未检索到住宅小区，人口覆盖率无法评估');
   if (!summaryParts.length) summaryParts.push('各类设施齐备，暂无明显服务盲区');
-  summaryParts.unshift(`最薄弱维度：${weak ? CATEGORY_MAP[weak.category].name + '（完整度 ' + Math.round(weak.completeness * 100) + '%）' : '—'}`);
+  summaryParts.unshift(
+    `最薄弱维度：${weak ? CATEGORY_MAP[weak.category].name + '（完整度 ' + Math.round(weak.completeness * 100) + '%）' : '—'}`
+  );
 
-  return { total, grade, dims: { completeness, proximity, coverage, diversity }, details, summary: summaryParts.join('；') + '。' };
+  return {
+    total,
+    grade,
+    dims: { completeness, proximity, coverage, diversity },
+    coverageUnavailable: !coverageAvailable,
+    missingDataCategories: missingDataNames,
+    details,
+    summary: summaryParts.join('；') + '。'
+  };
 }
 
 function bearingName(from: LatLng, to: LatLng): string {
@@ -86,6 +142,6 @@ function bearingName(from: LatLng, to: LatLng): string {
   if (a < 157.5) return '东南';
   if (a < 202.5) return '正南';
   if (a < 247.5) return '西南';
-  if (a < 292.5) return '正西';
+  if (a < 292.5) return '西北';
   return '西北';
 }

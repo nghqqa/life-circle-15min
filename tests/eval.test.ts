@@ -116,6 +116,10 @@ describe('eval · 单缺药店社区', () => {
     expect(gap.patches.length).toBe(0);
     expect(gap.coverageShare).toBeLessThan(1);
   });
+  it('规划引擎仍应给出药店补点建议（覆盖「缺 1 类」场景）', () => {
+    expect(sites.length).toBeGreaterThan(0);
+    expect(sites[0].category).toBe('pharmacy');
+  });
   it('总分为各场景中受缺一类影响的合理区间（≤ 完美社区）', () => {
     const perfect = computeScore(CENTER, buildPois(), analyzeGaps(makeField(), buildPois(), { minPatchCells: 4 }));
     expect(score.total).toBeLessThan(perfect.total);

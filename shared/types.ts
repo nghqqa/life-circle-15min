@@ -139,6 +139,8 @@ export interface ScoreDimDetail {
   completeness: number;
   nearestM: number | null;
   proximity: number;
+  /** true = 该类检索失败，数量为 0 属数据缺失而非真实结论 */
+  missingData?: boolean;
 }
 
 export interface ScoreResult {
@@ -147,9 +149,12 @@ export interface ScoreResult {
   dims: {
     completeness: number;
     proximity: number;
-    coverage: number;
+    /** 人口覆盖：无居住采样时为 null（无法评估） */
+    coverage: number | null;
     diversity: number;
   };
+  coverageUnavailable?: boolean;
+  missingDataCategories?: string[];
   details: ScoreDimDetail[];
   summary: string;
 }
@@ -209,6 +214,10 @@ export interface AnalysisResult {
   score: ScoreResult;
   checklist: ChecklistItem[];
   planSites: PlanSite[];
+  /** 数据口径警告：区分「数据缺失」「模型合成」「真实结论」 */
+  warnings?: string[];
+  /** 检索失败的类别（数量 0 属数据缺失而非真实结论） */
+  failedCategories?: CategoryId[];
   /** 累积机会指标（学界标准口径）：圈内可步行抵达的设施总数与类别数 */
   cumulative?: {
     total: number;
