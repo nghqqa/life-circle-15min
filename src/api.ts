@@ -2,6 +2,7 @@ import { mockDetourFactor, generateMockPois } from '../shared/mock.js';
 import { THRESHOLDS, DEFAULT_CENTER } from '../shared/config.js';
 import { destination } from '../shared/geo.js';
 import { sampleBearings } from '../shared/isochrone.js';
+import { poiCacheKey, getCachedPois, setCachedPois } from './poiCache.js';
 import type { ChannelName, LatLng, Poi, PoiSource, RouteProbe } from '../shared/types.js';
 
 /**
@@ -568,7 +569,17 @@ export class GatewayChain {
   }
 
   searchPoi(params: PoiSearchParams) {
-    return this.run((g) => g.searchPoi(params), `poi:${params.query}`);
+    // 配额防线：先查浏览器端结果缓存（同位置重复分析零消耗）
+    const key = poiCacheKey(params.query, params.location, params.radiusM);
+    const hit = getCachedPois(key);
+    if (hit) {
+      return Promise.resolve({ value: hit.pois, channel: hit.channel, ms: 0, degraded: hit.channel !== this.gateways[0].name });
+    }
+    return this.run(async (g) => {
+      const pois = await g.searchPoi(params);
+      if (g.name !== 'mock') setCachedPois(key, { channel: g.name, at: Date.now(), pois });
+      return pois;
+    }, `poi:${params.query}`);
   }
 
   /** 批量算路：超过 batch 上限自动分片；单方向失败记为 null（由模型合成兜底） */

@@ -1,18 +1,19 @@
 import type { CategoryDef, CategoryId, LatLng, PersonaDef, PersonaId } from './types.js';
 
-/** 民生设施分类体系：3 个核心类别对应评分细则（1km 内无菜市场/药店/小学即盲区） */
+/** 民生设施分类体系：3 个核心类别对应评分细则（1km 内无菜市场/药店/小学即盲区）。
+ *  检索关键词已按配额友好原则精简：每类默认 1 个，核心类菜市场保留 2 个。 */
 export const CATEGORIES: CategoryDef[] = [
   { id: 'hospital', name: '医院', color: '#e53935', keywords: ['医院'], ideal: 3, weight: 1.0, scored: true },
-  { id: 'clinic', name: '社区诊所', color: '#ef6c00', keywords: ['社区卫生服务中心', '诊所'], ideal: 3, weight: 1.5, scored: true },
-  { id: 'pharmacy', name: '药店', color: '#8e24aa', keywords: ['药店', '药房'], ideal: 6, weight: 2.0, core: true, scored: true },
-  { id: 'market', name: '菜市场', color: '#2e7d32', keywords: ['菜市场', '农贸市场', '生鲜超市'], ideal: 5, weight: 2.0, core: true, scored: true },
-  { id: 'supermarket', name: '商超', color: '#00838f', keywords: ['超市', '购物中心'], ideal: 10, weight: 1.0, scored: true },
+  { id: 'clinic', name: '社区诊所', color: '#ef6c00', keywords: ['诊所'], ideal: 3, weight: 1.5, scored: true },
+  { id: 'pharmacy', name: '药店', color: '#8e24aa', keywords: ['药店'], ideal: 6, weight: 2.0, core: true, scored: true },
+  { id: 'market', name: '菜市场', color: '#2e7d32', keywords: ['菜市场', '农贸市场'], ideal: 5, weight: 2.0, core: true, scored: true },
+  { id: 'supermarket', name: '商超', color: '#00838f', keywords: ['超市'], ideal: 10, weight: 1.0, scored: true },
   { id: 'primarySchool', name: '小学', color: '#f9a825', keywords: ['小学'], ideal: 3, weight: 2.0, core: true, scored: true },
   { id: 'kindergarten', name: '幼儿园', color: '#fdd835', keywords: ['幼儿园'], ideal: 4, weight: 1.5, scored: true },
-  { id: 'elderly', name: '养老服务', color: '#6d4c41', keywords: ['养老院', '老年日间照料'], ideal: 2, weight: 1.5, scored: true },
+  { id: 'elderly', name: '养老服务', color: '#6d4c41', keywords: ['养老院'], ideal: 2, weight: 1.5, scored: true },
   { id: 'busStop', name: '公交站', color: '#1e88e5', keywords: ['公交站'], ideal: 10, weight: 1.0, scored: true },
-  { id: 'park', name: '公园绿地', color: '#43a047', keywords: ['公园', '广场'], ideal: 4, weight: 1.0, scored: true },
-  { id: 'residential', name: '住宅小区', color: '#5c6bc0', keywords: ['住宅小区', '小区'], ideal: 0, weight: 0, scored: false }
+  { id: 'park', name: '公园绿地', color: '#43a047', keywords: ['公园'], ideal: 4, weight: 1.0, scored: true },
+  { id: 'residential', name: '住宅小区', color: '#5c6bc0', keywords: ['小区'], ideal: 0, weight: 0, scored: false }
 ];
 
 export const CATEGORY_MAP: Record<CategoryId, CategoryDef> = Object.fromEntries(
