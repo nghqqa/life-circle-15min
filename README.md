@@ -11,12 +11,28 @@
 
 ## 实测效果
 
-同一座城市，两个社区，系统的区分度：
+同一座城市，两个社区，系统的区分度（以下均为当前版本在真实数据下的实测结果）：
 
-| 样例 A·新校区（成人） | 样例 A·老年人视角 | 样例 B·老城核心 |
-| --- | --- | --- |
-| [![](docs/data/screenshots/A-adult.png)](docs/data/screenshots/A-adult.png) | [![](docs/data/screenshots/A-elderly.png)](docs/data/screenshots/A-elderly.png) | [![](docs/data/screenshots/B-urban.png)](docs/data/screenshots/B-urban.png) |
-| **E 级 36 分** · 人口覆盖率 0%<br>药店/养老 0 家，重度灰色区域覆盖全部居住权重 | 可达圈收缩约 35%<br>重度缺失占比 55% → **100%**：老人 15 分钟内无任何核心设施 | **B 级 88 分** · 人口覆盖率 100%<br>菜市场 14 · 药店 11 · 小学 10，齐备 |
+**样例 A · 新校区（成人）—— E 级 21 分 · 人口覆盖率 0%**
+
+药店、幼儿园、养老服务、公交站、公园绿地全部为 0 家——新建校区配套空白的极端案例，
+重度灰色区域覆盖全部居住权重：
+
+![](docs/data/screenshots/A-adult.png)
+
+**样例 A · 老年人视角 —— 可达圈明显收缩**
+
+步行速度 80 → 52 m/min，5/10 分钟环显著收缩，重度缺失（三类全无）居住权重占比 100%：
+成人尚可勉力走到最近的商超与诊所，老年人 15 分钟内无任何核心设施：
+
+![](docs/data/screenshots/A-elderly.png)
+
+**样例 B · 老城核心（对照）—— C 级 68 分**
+
+医院 20 · 社区诊所 20 · 药店 20 · 幼儿园 20 · 公交站 20（检索返回上限），
+设施齐备程度与样例 A 形成鲜明对比，验证系统区分度：
+
+![](docs/data/screenshots/B-urban.png)
 
 完整数据、人工核对过程与误差来源见 [真实对比测试报告](docs/COMPARISON_TEST.md)。
 

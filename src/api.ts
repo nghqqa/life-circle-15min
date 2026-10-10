@@ -632,7 +632,8 @@ export class GatewayChain {
     }
     return this.run(async (g) => {
       const pois = await g.searchPoi(params);
-      if (g.name !== 'mock') setCachedPois(key, { channel: g.name, at: Date.now(), pois });
+      // 空结果不缓存：限流抖动的空返回若被固化，会污染后续 6 小时的分析
+      if (g.name !== 'mock' && pois.length > 0) setCachedPois(key, { channel: g.name, at: Date.now(), pois });
       return pois;
     }, `poi:${params.query}`);
   }

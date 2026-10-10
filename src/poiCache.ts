@@ -6,7 +6,7 @@ import type { ChannelName, Poi } from '../shared/types.js';
  * 这是对「JS 地点检索」配额的第一道防线——答辩反复演示同一社区时零成本。
  */
 
-const PREFIX = 'lc-poi-v1:';
+const PREFIX = 'lc-poi-v2:'; // v2: 不再缓存空结果（v1 曾把限流抖动的空返回固化 6 小时）
 const TTL = 6 * 3600 * 1000;
 const MAX_ENTRIES = 200;
 
