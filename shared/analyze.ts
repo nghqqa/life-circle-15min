@@ -97,6 +97,8 @@ export interface AnalysisReport {
   warnings: string[];
   /** 检索失败的类别（数量 0 属数据缺失而非真实结论） */
   failedCategories: CategoryId[];
+  /** true = 设施检索全部失败，报告为不完整结果（批量任务应计为失败） */
+  incomplete: boolean;
   steps: AnalysisStep[];
 }
 
@@ -169,7 +171,7 @@ export async function runAnalysis(
   restIdx.forEach((idx, k) => {
     probes[idx] = rest[k] ?? null;
   });
-  const okProbes = probes.filter(Boolean).length;
+  const okProbes = probes.filter((p) => p && p.ok).length;
   step('路网采样算路', Date.now() - t0, okProbes > 0, `${okProbes}/${dirs} 向成功`);
 
   // 3) 时间场与等时环
@@ -231,7 +233,9 @@ export async function runAnalysis(
   }
   const cleaned = dedupePois(pois);
   const poiOk = Object.values(perKw).some((n) => n > 0);
-  step('设施 POI 检索', Date.now() - t0, poiOk, `共 ${cleaned.length} 条`);
+  // 全部（或全部已评分）类别检索失败 → 报告不完整，批量任务应计为失败而非 0 分结果
+  const incomplete = !poiOk;
+  step('设施 POI 检索', Date.now() - t0, poiOk, incomplete ? `全部类别检索失败` : `共 ${cleaned.length} 条`);
 
   // 4b) 累积机会指标（学界标准口径）
   const cumulative = cumulativeOpportunities(field, cleaned, minutes);
@@ -276,6 +280,7 @@ export async function runAnalysis(
     degraded,
     warnings,
     failedCategories,
+    incomplete,
     model: {
       dirs,
       probeM,

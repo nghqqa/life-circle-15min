@@ -120,9 +120,11 @@ export interface GapAnalysis {
   totalWeight: number;
   /** 每格缺失核心设施数 0-3（检索失败类别不计入缺失） */
   missingGrid: Uint8Array;
-  /** 每个核心类别的覆盖掩码（0/1），供选址引擎精确归因 */
+  /** 每个核心类别的覆盖掩码（0/1），供选址引擎精确归因；检索失败类别恒为 1（未知≠覆盖） */
   coveredMasks: Record<string, Uint8Array>;
   patches: GapPatch[];
+  /** 检索失败的核心类别（无法判断，未计入缺失与覆盖率） */
+  unknownCategories: string[];
   /** 人口加权覆盖率：三件套齐全的居住权重占比；无居住采样时为 null（无法评估） */
   coverageShare: number | null;
   /** 人口加权重度缺失占比；无居住采样时为 null */
@@ -223,6 +225,8 @@ export interface AnalysisResult {
   warnings?: string[];
   /** 检索失败的类别（数量 0 属数据缺失而非真实结论） */
   failedCategories?: CategoryId[];
+  /** true = 设施检索全部失败，报告为不完整结果 */
+  incomplete?: boolean;
   /** 累积机会指标（学界标准口径）：圈内可步行抵达的设施总数与类别数 */
   cumulative?: {
     total: number;

@@ -244,6 +244,8 @@ export function startStreetBatch(
               job.requestCount++;
             }
           );
+          // 数据不完整（如上游配额/检索全面失败）→ 计为失败，不作为 0 分结果参与排名
+          if (report.incomplete) throw new Error('数据不完整：该小区设施检索全部失败');
           job.consecutiveFailures = 0;
           job.communities.push({
             name: report.centerName.includes(',') ? p.name : report.centerName,

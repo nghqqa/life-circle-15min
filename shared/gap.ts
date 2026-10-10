@@ -76,11 +76,14 @@ export function analyzeGaps(
   for (let k = 0; k < n * n; k++) if (!inCircle(k)) weightGrid[k] = 0;
   const totalWeight = weightGrid.reduce((a, b) => a + b, 0);
 
-  // 2) 核心类别覆盖盘（检索失败的类别视同已覆盖——缺失状态无法判断）
+  // 2) 核心类别覆盖盘（检索失败的类别单独保留为「未知」：
+  //    不参与缺失判定，也不计入覆盖率——未知 ≠ 覆盖成功）
+  const judgedCats = CORE_CATEGORIES.filter((c) => !failedCats.has(c));
   const covered: Record<string, Uint8Array> = {};
   for (const cat of CORE_CATEGORIES) {
     const mask = new Uint8Array(n * n);
     if (failedCats.has(cat)) {
+      // 未知类别：掩码填 1 仅用于「不产生缺失」，覆盖率另按 judgedCats 计算
       mask.fill(1);
     } else {
       const disk = stampDisks(n, byCat[cat] ?? [], coreRadiusM, field, () => 1);
@@ -220,6 +223,7 @@ export function analyzeGaps(
     totalWeight,
     missingGrid,
     coveredMasks: covered as Record<string, Uint8Array>,
+    unknownCategories: CORE_CATEGORIES.filter((c) => failedCats.has(c)),
     patches: patches.slice(0, 8),
     coverageShare: coverageUnavailable ? null : totalWeight > 0 ? covWeight / totalWeight : null,
     severeShare: coverageUnavailable ? null : totalWeight > 0 ? severeWeight / totalWeight : null,

@@ -295,7 +295,7 @@ async function analyze() {
     restIdx.forEach((idx, k) => {
       probes[idx] = rm.value[k];
     });
-    const okProbes = probes.filter(Boolean).length;
+    const okProbes = probes.filter((p) => p && p.ok).length;
     stepUsage.push({
       name: '路网采样算路',
       usage: { channel: rm.channel, ms: pre.ms + rm.ms, note: `${okProbes}/${dirs} 向成功` }

@@ -179,19 +179,27 @@ function reportHtml(r: AnalysisResult): string {
 
 function checklistHtml(r: AnalysisResult): string {
   const rows = r.checklist
-    .map(
-      (c) => `<tr>
+    .map((c) => {
+      const verdict =
+        c.met === null
+          ? '<span class="pill mid">无法判断</span>'
+          : c.met
+            ? '<span class="pill ok">达标</span>'
+            : '<span class="pill bad">缺失</span>';
+      return `<tr>
       <td>${escapeHtml(c.name)}<br/><span style="color:var(--ink-2);font-size:11px">${escapeHtml(c.basis)}</span></td>
       <td class="num">≤${c.thresholdM}m</td>
       <td class="num">${c.nearestM != null ? c.nearestM + 'm' : '—'}</td>
-      <td>${c.met ? '<span class="pill ok">达标</span>' : '<span class="pill bad">缺失</span>'}</td>
-    </tr>`
-    )
+      <td>${verdict}</td>
+    </tr>`;
+    })
     .join('');
-  const metCount = r.checklist.filter((c) => c.met).length;
+  const judged = r.checklist.filter((c) => c.met !== null);
+  const metCount = judged.filter((c) => c.met).length;
+  const unknownCount = r.checklist.length - judged.length;
   return `
   <div class="rpt-summary">
-    「完整社区」对标清单：${metCount}/${r.checklist.length} 项达标。
+    「完整社区」对标清单：${metCount}/${judged.length} 项达标${unknownCount ? `，另有 ${unknownCount} 项因检索失败无法判断` : ''}。
     阈值参考《完整居住社区建设标准（试行）》《社区生活圈规划技术指南》通行口径取整，为可配置参考基线。
   </div>
   <table class="tbl">
@@ -519,7 +527,10 @@ function updateStreetStatus() {
     .map(([g, n]) => `${g} 级 ×${n}`)
     .join(' · ');
   const weakRows = (sum.weakList ?? [])
-    .map((w: any) => `<tr><td>${escapeHtml(shortName(w.name))}</td><td class="num">${w.score}</td><td class="num">${Math.round(w.coverageShare * 100)}%</td><td>${w.dominantMissing ? CATEGORY_MAP[w.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? w.dominantMissing : '—'}</td></tr>`)
+    .map((w: any) => {
+      const covText = w.coverageShare == null ? '无法评估' : Math.round(w.coverageShare * 100) + '%';
+      return `<tr><td>${escapeHtml(shortName(w.name))}</td><td class="num">${w.score}</td><td class="num">${covText}</td><td>${w.dominantMissing ? CATEGORY_MAP[w.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? w.dominantMissing : '—'}</td></tr>`;
+    })
     .join('');
   el.innerHTML = `
   <div class="kpi-row">
