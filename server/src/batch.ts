@@ -101,9 +101,7 @@ async function searchResidentials(ak: string, center: LatLng, radiusM: number): 
     if (rows.length < 20) break;
   }
   if (!pois.length && quotaExhausted) {
-    job.status = 'error';
-    job.error = '百度检索当日配额已耗尽（status 302），请明日重试或更换配额更高的 AK';
-    return [];
+    return { pois: [], quotaExhausted: true };
   }
   const cleaned = dedupePois(pois);
   cache.set(key, cleaned);
