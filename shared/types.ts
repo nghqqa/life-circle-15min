@@ -209,6 +209,20 @@ export interface AnalysisResult {
   score: ScoreResult;
   checklist: ChecklistItem[];
   planSites: PlanSite[];
+  /** 累积机会指标（学界标准口径）：圈内可步行抵达的设施总数与类别数 */
+  cumulative?: {
+    total: number;
+    byCategory: Record<string, number>;
+    categoriesCovered: number;
+    missingCategories: string[];
+  };
+  /** 插值精度自证：抽样真实算路 vs 模型估计的误差 */
+  accuracy?: {
+    samples: number;
+    maeMinutes: number;
+    maePercent: number;
+    worstPercent: number;
+  };
   crossings: CrossingStats | null;
   steps: { name: string; usage: ChannelUsage }[];
   mock: boolean;

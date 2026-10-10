@@ -1,12 +1,13 @@
 import { CATEGORIES, PERSONA_MAP, THRESHOLDS } from './config.js';
 import { buildChecklist } from './checklist.js';
 import { buildIsochroneModel, sampleBearings } from './isochrone.js';
-import { buildTimeField, contourPolylines, simplifyLine } from './timefield.js';
+import { buildTimeField, contourPolylines, simplifyLine, sampleTimeNearest } from './timefield.js';
 import { analyzeGaps } from './gap.js';
 import { computeScore } from './scoring.js';
 import { dedupePois } from './poi.js';
 import { planFacilitiesFromCoverage } from './planner.js';
-import { destination } from './geo.js';
+import { cumulativeOpportunities, interpolationAccuracy } from './cumulative.js';
+import { destination, interpAngle } from './geo.js';
 import type {
   CategoryId,
   LatLng,
@@ -86,6 +87,10 @@ export interface AnalysisReport {
     patches: PatchSummary[];
   };
   planSites: ReturnType<typeof planFacilitiesFromCoverage>;
+  /** 累积机会指标（学界标准口径）：圈内可步行抵达的设施总数与类别数 */
+  cumulative: ReturnType<typeof cumulativeOpportunities>;
+  /** 插值精度自证：抽样真实算路 vs 模型估计的平均绝对误差 */
+  accuracy: ReturnType<typeof interpolationAccuracy>;
   steps: AnalysisStep[];
 }
 
@@ -172,6 +177,32 @@ export async function runAnalysis(
   }));
   step('时间场与等时环', Date.now() - t0, true, `${rings.length} 层等时环`);
 
+  // 3b) 插值精度自证：8 个抽样点全量算路 vs 模型估计 → MAE
+  t0 = Date.now();
+  const sampleB = [15, 60, 105, 150, 195, 240, 285, 330];
+  let accuracy: AnalysisReport['accuracy'] = {
+    samples: 0, maeMinutes: 0, maePercent: 0, worstPercent: 0, details: []
+  };
+  try {
+    const real = await provider.routeMatrix(
+      center,
+      sampleB.map((b) => destination(center, b, probeM * 0.6))
+    );
+    const realProbes = real
+      .map((p, i) => ({ bearing: sampleB[i], distM: p && p.ok ? p.distM : 0 }))
+      .filter((p) => p.distM > 0);
+    accuracy = interpolationAccuracy(
+      center,
+      realProbes,
+      (theta) => interpAngle(model.factors, dirs, theta),
+      persona.speed
+    );
+  } catch {
+    /* 精度自证失败不影响主流程 */
+  }
+  step('插值精度自证', Date.now() - t0, accuracy.samples > 0,
+    accuracy.samples ? `抽样 ${accuracy.samples} 点 · MAE ${accuracy.maeMinutes} 分钟（${accuracy.maePercent}%）` : '未执行');
+
   // 4) POI 检索（串行，尊重上游并发限制）
   t0 = Date.now();
   const pois: Poi[] = [];
@@ -189,6 +220,9 @@ export async function runAnalysis(
   const cleaned = dedupePois(pois);
   const poiOk = Object.values(perKw).some((n) => n > 0);
   step('设施 POI 检索', Date.now() - t0, poiOk, `共 ${cleaned.length} 条`);
+
+  // 4b) 累积机会指标（学界标准口径）
+  const cumulative = cumulativeOpportunities(field, cleaned, minutes);
 
   // 5) 盲区 + 评分 + 清单
   t0 = Date.now();
@@ -242,6 +276,8 @@ export async function runAnalysis(
       }))
     },
     planSites,
+    cumulative,
+    accuracy,
     steps
   };
 }

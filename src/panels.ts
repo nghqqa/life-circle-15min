@@ -132,6 +132,8 @@ function reportHtml(r: AnalysisResult): string {
     <div class="kpi"><b>${Math.round(dim.proximity * 100)}</b><span>临近度</span></div>
     <div class="kpi"><b>${Math.round(dim.coverage * 100)}</b><span>人口覆盖率</span></div>
   </div>
+  ${r.cumulative ? `<div class="rpt-sub" style="margin:-6px 0 10px">累积机会（学界标准口径）：${r.minutes} 分钟步行圈可抵达设施 <b>${r.cumulative.total}</b> 处 · 覆盖 <b>${r.cumulative.categoriesCovered}</b>/10 类${r.cumulative.missingCategories.length ? ' · 圈内缺失：' + r.cumulative.missingCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c).join('、') : ''}</div>` : ''}
+  ${r.accuracy && r.accuracy.samples > 0 ? `<div class="rpt-sub" style="margin:-6px 0 10px">插值精度自证：抽样 ${r.accuracy.samples} 个真实算路点，模型估计平均绝对误差 <b>${r.accuracy.maeMinutes} 分钟（${r.accuracy.maePercent}%）</b>，最大偏差 ${r.accuracy.worstPercent}%</div>` : ''}
   <div class="rpt-summary"><span class="sum-label">诊断</span>${escapeHtml(r.score.summary)}</div>
   <div class="sec-title">四维体检（雷达）</div>
   <div id="chart-radar" class="chart-box"></div>
@@ -451,16 +453,22 @@ function updateStreetStatus() {
   const dist = Object.entries(sum.gradeDist ?? {})
     .map(([g, n]) => `${g} 级 ×${n}`)
     .join(' · ');
+  const weakRows = (sum.weakList ?? [])
+    .map((w: any) => `<tr><td>${escapeHtml(shortName(w.name))}</td><td class="num">${w.score}</td><td class="num">${Math.round(w.coverageShare * 100)}%</td><td>${w.dominantMissing ? CATEGORY_MAP[w.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? w.dominantMissing : '—'}</td></tr>`)
+    .join('');
   el.innerHTML = `
   <div class="kpi-row">
     <div class="kpi"><b>${sum.avgScore ?? '—'}</b><span>街道均分</span></div>
     <div class="kpi"><b>${s.total}</b><span>采样小区</span></div>
-    <div class="kpi"><b>${s.communities.filter((c) => c.score >= 0).length}</b><span>有效样本</span></div>
+    <div class="kpi"><b>${sum.scoreGap ?? 0}</b><span>最优最差极差</span></div>
   </div>
   <div class="rpt-summary"><span class="sum-label">汇总</span>等级分布：${escapeHtml(dist || '—')}；
   ${sum.best ? `最优 <b>${escapeHtml(shortName(sum.best.name))}（${sum.best.score}）</b>` : ''}
   ${sum.worst ? `、最差 <b>${escapeHtml(shortName(sum.worst.name))}（${sum.worst.score}）</b>` : ''}。
   地图上已按等级着色标注各小区。</div>
+  ${(sum.weakList ?? []).length ? `<div class="sec-title">公平性视角 · 薄弱小区清单</div>
+  <table class="tbl"><thead><tr><th>小区</th><th>评分</th><th>覆盖率</th><th>主要缺失</th></tr></thead><tbody>${weakRows}</tbody></table>
+  <div class="rpt-sub">公平性口径：评分 &lt; 75 或人口覆盖率 &lt; 80% 判定为薄弱小区——资源应优先向这些片区倾斜。</div>` : ''}
   ${communityTable(s.communities)}
   <div class="rpt-sub">说明：小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
 }

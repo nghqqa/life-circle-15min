@@ -41,6 +41,10 @@ export interface BatchJob {
     gradeDist: Record<string, number>;
     best: BatchCommunityResult | null;
     worst: BatchCommunityResult | null;
+    /** 公平性视角：最优与最差的小区评分极差（分） */
+    scoreGap: number;
+    /** 薄弱清单：评分 < 75 或覆盖率 < 80% 的小区 */
+    weakList: { name: string; score: number; coverageShare: number; dominantMissing: string | null }[];
   } | null;
   error?: string;
 }
@@ -224,7 +228,12 @@ export function startStreetBatch(
         avgScore: valid.length ? Math.round((valid.reduce((a, c) => a + c.score, 0) / valid.length) * 10) / 10 : 0,
         gradeDist,
         best: sorted[0] ?? null,
-        worst: sorted[sorted.length - 1] ?? null
+        worst: sorted[sorted.length - 1] ?? null,
+        scoreGap: sorted.length > 1 ? sorted[0].score - sorted[sorted.length - 1].score : 0,
+        weakList: valid
+          .filter((c) => c.score < 75 || c.coverageShare < 0.8)
+          .sort((a, b) => a.score - b.score)
+          .map((c) => ({ name: c.name, score: c.score, coverageShare: c.coverageShare, dominantMissing: c.dominantMissing }))
       };
       job.status = 'done';
     } catch (err) {

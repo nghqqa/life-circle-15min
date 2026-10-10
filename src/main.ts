@@ -8,11 +8,14 @@ import {
   buildIsochroneModel,
   buildTimeField,
   contourPolylines,
+  cumulativeOpportunities,
   dedupePois,
   analyzeGaps,
   computeScore,
   destination,
   fieldBounds,
+  interpolationAccuracy,
+  interpAngle,
   planFacilitiesFromCoverage,
   type AnalysisResult,
   type ChannelName,
@@ -310,16 +313,44 @@ async function analyze() {
     const rings = levels.map((level) => ({ level, lines: contourPolylines(field, level) }));
     hud.done(2, 'server', 0);
 
+    // 3b) 插值精度自证：8 个抽样点全量算路 vs 模型估计
+    let accuracy: AnalysisResult['accuracy'];
+    try {
+      const sb = [15, 60, 105, 150, 195, 240, 285, 330];
+      const real = await chain.routeMatrix(
+        state.center,
+        sb.map((b) => destination(state.center, b, probeM * 0.6))
+      );
+      const realProbes = real.value
+        .map((p, i) => ({ bearing: sb[i], distM: p && p.ok ? p.distM : 0 }))
+        .filter((p) => p.distM > 0);
+      accuracy = interpolationAccuracy(
+        state.center,
+        realProbes,
+        (theta) => interpAngle(model.factors, dirs, theta),
+        persona.speed
+      );
+      if (accuracy.samples > 0) {
+        stepUsage.push({
+          name: '插值精度自证',
+          usage: { channel: real.channel, ms: real.ms, note: `MAE ${accuracy.maeMinutes} 分钟（${accuracy.maePercent}%）` }
+        });
+      }
+    } catch {
+      /* 精度自证失败不影响主流程 */
+    }
+
     // 4) POI 检索
     hud.doing(3, '民生设施分类检索…');
     const pois = await searchAllCategories(chain, (note) => hud.note(note), stepUsage);
     hud.done(3, 'server', 0);
 
-    // 5) 盲区识别 + 评分 + 清单
+    // 5) 盲区识别 + 评分 + 清单 + 累积机会
     hud.doing(4, '人口加权盲区聚合 · 四维评分');
     const gap = analyzeGaps(field, pois);
     const score = computeScore(state.center, pois, gap);
     const checklist = buildChecklist(state.center, pois);
+    const cumulative = cumulativeOpportunities(field, pois, state.minutes);
     hud.done(4, 'server', 0);
 
     // 6) 补点规划
@@ -350,6 +381,8 @@ async function analyze() {
       score,
       checklist,
       planSites,
+      cumulative,
+      accuracy,
       crossings,
       steps: stepUsage,
       mock: rm.channel === 'mock'
