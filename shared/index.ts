@@ -11,4 +11,5 @@ export * from './checklist.js';
 export * from './planner.js';
 export * from './mock.js';
 export * from './cumulative.js';
+export * from './warnings.js';
 export * from './analyze.js';

@@ -45,7 +45,7 @@ describe('盲区识别', () => {
     expect(gap.blindPoints).toBeGreaterThan(0);
   });
 
-  it('设施全覆盖时无斑块', () => {
+  it('设施全覆盖时无斑块，有居住采样时覆盖率 100%', () => {
     const field = makeField();
     const pois: Poi[] = [];
     // 四角 + 中心都有三件套 → 全覆盖
@@ -56,9 +56,26 @@ describe('盲区识别', () => {
         pois.push({ uid: `${cat}${b}`, name: cat, lat: p.lat, lng: p.lng, category: cat, source: 'mock' });
       }
     }
+    // 中心放一个住宅小区，使覆盖率口径可评估
+    pois.push({ uid: 'res0', name: '中心小区', lat: CENTER.lat, lng: CENTER.lng, category: 'residential', source: 'mock' });
     const gap = analyzeGaps(field, pois, { coreRadiusM: 1000, minPatchCells: 4 });
     expect(gap.patches.length).toBe(0);
+    expect(gap.coverageUnavailable).toBe(false);
     expect(gap.coverageShare).toBe(1);
+  });
+
+  it('无居住采样时覆盖率不可评估（null，不再误报 100%）', () => {
+    const field = makeField();
+    const pois: Poi[] = [];
+    for (const b of [0, 90, 180, 270]) {
+      for (const cat of ['market', 'pharmacy', 'primarySchool'] as const) {
+        const p = destination(CENTER, b, 350);
+        pois.push({ uid: `${cat}${b}`, name: cat, lat: p.lat, lng: p.lng, category: cat, source: 'mock' });
+      }
+    }
+    const gap = analyzeGaps(field, pois, { coreRadiusM: 1000, minPatchCells: 4 });
+    expect(gap.coverageUnavailable).toBe(true);
+    expect(gap.coverageShare).toBeNull();
   });
 });
 

@@ -64,7 +64,8 @@ export function computeScore(
   const counts = counted.map((d) => d.count);
   const countTotal = counts.reduce((a, b) => a + b, 0);
   let diversity = 0;
-  if (countTotal > 0) {
+  // 可用类别数 ≤ 1 时香农熵无意义（log(1)=0 会除零），记 0
+  if (countTotal > 0 && counts.length > 1) {
     let h = 0;
     for (const c of counts) {
       if (c <= 0) continue;
@@ -112,7 +113,7 @@ export function computeScore(
       `最大灰色区域位于${bearingName(center, top.centroid)}方向，覆盖约 ${(top.weightShare * 100).toFixed(0)}% 居住权重，主要缺${CATEGORY_MAP[top.dominant].name}`
     );
   }
-  if (coverageAvailable && gap.severeShare > 0.05)
+  if (coverageAvailable && gap.severeShare != null && gap.severeShare > 0.05)
     summaryParts.push(`重度缺失（三类全无）居住权重占 ${(gap.severeShare * 100).toFixed(0)}%`);
   if (gap.totalWeight === 0) summaryParts.push('片区内未检索到住宅小区，人口覆盖率无法评估');
   if (!summaryParts.length) summaryParts.push('各类设施齐备，暂无明显服务盲区');

@@ -17,7 +17,8 @@ export interface BatchCommunityResult {
   center: LatLng;
   score: number;
   grade: string;
-  coverageShare: number;
+  coverageShare: number | null;
+  coverageUnavailable?: boolean;
   blindPoints: number;
   patches: number;
   dominantMissing: string | null;
@@ -60,7 +61,7 @@ export interface BatchJob {
     /** 公平性视角：最优与最差的小区评分极差（分） */
     scoreGap: number;
     /** 薄弱清单：评分 < 75 或覆盖率 < 80% 的小区 */
-    weakList: { name: string; score: number; coverageShare: number; dominantMissing: string | null }[];
+    weakList: { name: string; score: number; coverageShare: number | null; dominantMissing: string | null }[];
     /** 城区级试点：按街道分组的聚合排名 */
     streetGroups: StreetGroup[];
   } | null;
@@ -235,13 +236,14 @@ export function startStreetBatch(
           return;
         }
         job.current = p.name;
-        const before = job.requestCount;
         try {
           const report = await analyzeWithServerProvider(
             { center: { lat: p.lat, lng: p.lng }, persona: 'adult', minutes: 15 },
-            ak
+            ak,
+            () => {
+              job.requestCount++;
+            }
           );
-          job.requestCount = before + 30; // 单社区约 12 检索 + 3 算路（含重试余量）
           job.consecutiveFailures = 0;
           job.communities.push({
             name: report.centerName.includes(',') ? p.name : report.centerName,
@@ -250,6 +252,7 @@ export function startStreetBatch(
             score: report.score.total,
             grade: report.score.grade,
             coverageShare: report.gap.coverageShare,
+            coverageUnavailable: report.gap.coverageUnavailable,
             blindPoints: report.gap.blindPoints,
             patches: report.gap.patches.length,
             dominantMissing: report.gap.patches[0]
@@ -259,7 +262,6 @@ export function startStreetBatch(
             degraded: report.degraded
           });
         } catch (err) {
-          job.requestCount = before + 30;
           job.consecutiveFailures++;
           job.communities.push({
             name: p.name,
@@ -267,7 +269,8 @@ export function startStreetBatch(
             center: { lat: p.lat, lng: p.lng },
             score: -1,
             grade: '-',
-            coverageShare: 0,
+            coverageShare: null,
+            coverageUnavailable: true,
             blindPoints: 0,
             patches: 0,
             dominantMissing: null,
@@ -293,7 +296,9 @@ export function startStreetBatch(
         .map(([street, list]) => {
           const ss = [...list].sort((a, b) => b.score - a.score);
           const avg = Math.round((list.reduce((a, c) => a + c.score, 0) / list.length) * 10) / 10;
-          const weak = list.filter((c) => c.score < 75 || c.coverageShare < 0.8).length;
+          const weak = list.filter(
+            (c) => c.score < 75 || (c.coverageShare != null && c.coverageShare < 0.8)
+          ).length;
           return {
             street,
             count: list.length,
@@ -313,9 +318,14 @@ export function startStreetBatch(
         worst: sorted[sorted.length - 1] ?? null,
         scoreGap: sorted.length > 1 ? sorted[0].score - sorted[sorted.length - 1].score : 0,
         weakList: valid
-          .filter((c) => c.score < 75 || c.coverageShare < 0.8)
+          .filter((c) => c.score < 75 || (c.coverageShare != null && c.coverageShare < 0.8))
           .sort((a, b) => a.score - b.score)
-          .map((c) => ({ name: c.name, score: c.score, coverageShare: c.coverageShare, dominantMissing: c.dominantMissing })),
+          .map((c) => ({
+            name: c.name,
+            score: c.score,
+            coverageShare: c.coverageShare ?? null,
+            dominantMissing: c.dominantMissing
+          })),
         streetGroups
       };
       job.status = 'done';

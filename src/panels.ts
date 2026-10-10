@@ -21,7 +21,8 @@ interface StreetCommunity {
   center: LatLng;
   score: number;
   grade: string;
-  coverageShare: number;
+  coverageShare: number | null;
+  coverageUnavailable?: boolean;
   dominantMissing: string | null;
   error?: string;
 }
@@ -201,12 +202,17 @@ function checklistHtml(r: AnalysisResult): string {
 
 function gapsHtml(r: AnalysisResult): string {
   const g = r.gap;
+  const covText =
+    g.coverageShare == null
+      ? '无法评估<span style="font-size:10px">（无居住采样）</span>'
+      : `${Math.round(g.coverageShare * 100)}%`;
   const head = `
   <div class="kpi-row">
     <div class="kpi"><b>${g.blindPoints}</b><span>盲区点位(格)</span></div>
     <div class="kpi"><b>${g.patches.length}</b><span>灰色斑块</span></div>
-    <div class="kpi"><b>${Math.round((1 - g.coverageShare) * 100)}%</b><span>居住权重未全覆盖</span></div>
+    <div class="kpi"><b>${g.coverageShare == null ? '—' : Math.round(g.coverageShare * 100) + '%'}</b><span>居住权重全覆盖</span></div>
   </div>
+  ${g.coverageShare == null ? '<div class="rpt-sub" style="color:var(--warn);margin-bottom:10px">片区内未检索到住宅小区（人口代理缺失），覆盖率与权重结论无法评估。</div>' : ''}
   <div class="rpt-sub" style="margin-bottom:10px">
     盲区点位 = 步行时间圈内缺失任一核心设施（菜市场/药店/小学，1km 口径）的网格；
     缺 ≥2 项的连通区域聚合为灰色斑块，按住宅小区密度（人口代理）加权排序。
@@ -489,8 +495,19 @@ function updateStreetStatus() {
   }
   if (s.status === 'running') {
     el.innerHTML = `
-    <div class="rpt-summary"><span class="sum-label">进行中</span>${s.done}/${s.total} 完成 · 当前：${escapeHtml(s.current)}</div>
+    <div class="rpt-summary"><span class="sum-label">进行中</span>${s.done}/${s.total} 完成 · 当前：${escapeHtml(s.current)}
+    <button id="btn-street-cancel" class="btn ghost" style="margin-left:8px;height:26px;padding:0 10px;font-size:12px">取消任务</button></div>
     ${s.communities.length ? communityTable(s.communities) : ''}`;
+    el.querySelector('#btn-street-cancel')?.addEventListener('click', async () => {
+      if (!streetJobId) return;
+      try {
+        await fetch(`/api/batch/cancel/${streetJobId}`, { method: 'POST' });
+      } catch { /* 轮询会反映最终状态 */ }
+    });
+    return;
+  }
+  if (s.status === 'cancelled') {
+    el.innerHTML = `<div class="rpt-summary"><span class="sum-label" style="color:var(--warn)">已取消</span>任务已停止，已完成的 ${s.done} 个小区结果保留。</div>${communityTable(s.communities)}`;
     return;
   }
   if (s.status === 'error') {
@@ -523,23 +540,24 @@ function updateStreetStatus() {
     <td>${escapeHtml(g.street)}</td><td class="num">${g.count}</td><td class="num"><b>${g.avgScore}</b></td>
     <td class="num">${g.weakCount || '—'}</td>
     <td class="num">${g.bestScore}　</td><td class="num">${g.worstScore}</td></tr>`).join('')}</tbody></table>` : ''}
-  ${communityTable(s.communities)}
+  ${communityTable(s.communities.filter((c: any) => c.score >= 0))}
   <div class="rpt-sub">说明：排名为<b>片区抽样口径</b>（采样半径内住宅小区），非行政街道全域普查；小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
 }
 
-function communityTable(communities: StreetCommunity[]): string {
+function communityTable(communities: (StreetCommunity & { coverageUnavailable?: boolean })[]): string {
   const sorted = [...communities].sort((a, b) => b.score - a.score);
   const rows = sorted
-    .map(
-      (c) => `<tr>
+    .map((c) => {
+      const covText = c.coverageUnavailable || c.coverageShare == null ? '无法评估' : Math.round(c.coverageShare * 100) + '%';
+      return `<tr>
       <td>${escapeHtml(shortName(c.name))}</td>
       <td class="num">${c.score >= 0 ? c.score : '—'}</td>
       <td>${c.grade === '-' ? '—' : `<span class="pill ${c.grade === 'A' || c.grade === 'B' ? 'ok' : c.grade === 'C' ? 'mid' : 'bad'}">${c.grade}</span>`}</td>
-      <td class="num">${c.score >= 0 ? Math.round(c.coverageShare * 100) + '%' : '—'}</td>
+      <td class="num">${covText}</td>
       <td>${c.dominantMissing ? CATEGORY_MAP[c.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? c.dominantMissing : '—'}</td>
       <td><button class="btn ghost plan-loc" data-fly="${c.center.lat},${c.center.lng}">定位</button></td>
-    </tr>`
-    )
+    </tr>`;
+    })
     .join('');
   return `<table class="tbl">
     <thead><tr><th>小区</th><th>评分</th><th>等级</th><th>覆盖率</th><th>主要缺失</th><th></th></tr></thead>

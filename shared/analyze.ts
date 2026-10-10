@@ -7,6 +7,7 @@ import { computeScore } from './scoring.js';
 import { dedupePois } from './poi.js';
 import { planFacilitiesFromCoverage } from './planner.js';
 import { cumulativeOpportunities, interpolationAccuracy } from './cumulative.js';
+import { buildAnalysisWarnings } from './warnings.js';
 import { destination, interpAngle } from './geo.js';
 import type {
   CategoryId,
@@ -82,8 +83,9 @@ export interface AnalysisReport {
   checklist: ReturnType<typeof buildChecklist>;
   gap: {
     blindPoints: number;
-    coverageShare: number;
-    severeShare: number;
+    coverageShare: number | null;
+    severeShare: number | null;
+    coverageUnavailable: boolean;
     patches: PatchSummary[];
   };
   planSites: ReturnType<typeof planFacilitiesFromCoverage>;
@@ -238,11 +240,11 @@ export async function runAnalysis(
     (c) => c.id
   );
 
-  // 5) 盲区 + 评分 + 清单
+  // 5) 盲区 + 评分 + 清单（失败类别按「无法判断」贯通）
   t0 = Date.now();
-  const gap = analyzeGaps(field, cleaned);
+  const gap = analyzeGaps(field, cleaned, { failedCategories });
   const score = computeScore(center, cleaned, gap, { failedCategories });
-  const checklist = buildChecklist(center, cleaned);
+  const checklist = buildChecklist(center, cleaned, { failedCategories });
   step('盲区识别与评分', Date.now() - t0, true, `总分 ${score.total}（${score.grade}）`);
 
   // 6) 补点规划
@@ -253,30 +255,17 @@ export async function runAnalysis(
   const counts: Record<string, number> = {};
   for (const p of cleaned) counts[p.category] = (counts[p.category] ?? 0) + 1;
 
-  // 降级与警告：区分「数据缺失」「模型合成」「真实结论」三种口径
+  // 降级与警告：区分「数据缺失」「模型合成」「真实结论」三种口径（与 Web 端共用生成器）
   const degraded = okProbes === 0;
-  const warnings: string[] = [];
-  if (okProbes === 0) {
-    warnings.push('全部方向算路失败：等时圈为模型合成估计，可达范围结论仅供参考');
-  } else if (model.degradedDirs > 0) {
-    warnings.push(`${model.degradedDirs} 个方向算路失败，已按道路网格模型合成该扇区`);
-  }
-  const strongBlocked = probes.filter((p) => p && p.ok && p.distM > probeM * 3).length;
-  if (strongBlocked > 0) {
-    warnings.push(
-      `${strongBlocked} 个方向为强阻隔（步行绕行系数>3）：这些扇区可达范围已按模型上限折算，实际可能更小`
-    );
-  }
-  if (failedCategories.length) {
-    const names = failedCategories.map((c) => CATEGORIES.find((x) => x.id === c)?.name ?? c);
-    warnings.push(`设施检索失败：${names.join('、')}——相关类别的数量与完整性结论缺失，未计入评分`);
-  }
-  if (gap.totalWeight === 0) {
-    warnings.push('片区内未检索到住宅小区：人口覆盖率与盲区权重结论无法评估');
-  }
-  if (!poiOk) {
-    warnings.push('设施检索全部失败：评分与盲区结论不可用');
-  }
+  const warnings = buildAnalysisWarnings({
+    okProbes,
+    degradedDirs: model.degradedDirs,
+    probes,
+    probeStraightM: probeM,
+    failedCategories,
+    totalWeight: gap.totalWeight,
+    poiOk
+  });
 
   return {
     center,
@@ -303,6 +292,7 @@ export async function runAnalysis(
       blindPoints: gap.blindPoints,
       coverageShare: gap.coverageShare,
       severeShare: gap.severeShare,
+      coverageUnavailable: gap.coverageUnavailable,
       patches: gap.patches.map((p) => ({
         id: p.id,
         centroid: p.centroid,

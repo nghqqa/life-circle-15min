@@ -50,12 +50,19 @@ function gridExtentM(f: TimeField): number {
 export function analyzeGaps(
   field: TimeField,
   pois: Poi[],
-  opts: { coreRadiusM?: number; minPatchCells?: number; residentialRadiusM?: number } = {}
+  opts: {
+    coreRadiusM?: number;
+    minPatchCells?: number;
+    residentialRadiusM?: number;
+    /** 检索失败的核心类别：按「无法判断」处理（视同已覆盖，不产生缺失与盲区） */
+    failedCategories?: CategoryId[];
+  } = {}
 ): GapAnalysis {
   const n = field.n;
   const coreRadiusM = opts.coreRadiusM ?? THRESHOLDS.coreRadiusM;
   const minPatchCells = opts.minPatchCells ?? THRESHOLDS.minPatchCells;
   const residentialRadiusM = opts.residentialRadiusM ?? THRESHOLDS.residentialRadiusM;
+  const failedCats = new Set<string>(opts.failedCategories ?? []);
   // 只在 15 分钟步行圈内做体检：圈外（t > minutes）不属于该中心点的服务范围
   const inCircle = (k: number) => field.t[k] <= field.minutes;
 
@@ -69,12 +76,16 @@ export function analyzeGaps(
   for (let k = 0; k < n * n; k++) if (!inCircle(k)) weightGrid[k] = 0;
   const totalWeight = weightGrid.reduce((a, b) => a + b, 0);
 
-  // 2) 核心类别覆盖盘
+  // 2) 核心类别覆盖盘（检索失败的类别视同已覆盖——缺失状态无法判断）
   const covered: Record<string, Uint8Array> = {};
   for (const cat of CORE_CATEGORIES) {
     const mask = new Uint8Array(n * n);
-    const disk = stampDisks(n, byCat[cat] ?? [], coreRadiusM, field, () => 1);
-    for (let k = 0; k < n * n; k++) mask[k] = disk[k] > 0 && inCircle(k) ? 1 : 0;
+    if (failedCats.has(cat)) {
+      mask.fill(1);
+    } else {
+      const disk = stampDisks(n, byCat[cat] ?? [], coreRadiusM, field, () => 1);
+      for (let k = 0; k < n * n; k++) mask[k] = disk[k] > 0 && inCircle(k) ? 1 : 0;
+    }
     covered[cat] = mask;
   }
 
@@ -190,13 +201,16 @@ export function analyzeGaps(
 
   patches.sort((a, b) => b.weight - a.weight);
 
+  const coverageUnavailable = totalWeight <= 0;
   let covWeight = 0;
   let severeWeight = 0;
-  for (let k = 0; k < n * n; k++) {
-    const w = weightGrid[k];
-    if (w <= 0) continue;
-    if (missingGrid[k] === 0) covWeight += w;
-    if (missingGrid[k] === 3) severeWeight += w;
+  if (!coverageUnavailable) {
+    for (let k = 0; k < n * n; k++) {
+      const w = weightGrid[k];
+      if (w <= 0) continue;
+      if (missingGrid[k] === 0) covWeight += w;
+      if (missingGrid[k] === 3) severeWeight += w;
+    }
   }
 
   return {
@@ -207,8 +221,9 @@ export function analyzeGaps(
     missingGrid,
     coveredMasks: covered as Record<string, Uint8Array>,
     patches: patches.slice(0, 8),
-    coverageShare: totalWeight > 0 ? covWeight / totalWeight : 1,
-    severeShare: totalWeight > 0 ? severeWeight / totalWeight : 0,
+    coverageShare: coverageUnavailable ? null : totalWeight > 0 ? covWeight / totalWeight : null,
+    severeShare: coverageUnavailable ? null : totalWeight > 0 ? severeWeight / totalWeight : null,
+    coverageUnavailable,
     blindPoints
   };
 }

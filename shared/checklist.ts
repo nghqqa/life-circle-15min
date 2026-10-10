@@ -3,9 +3,10 @@ import { nearestPoiM } from './poi.js';
 import type { ChecklistItem, LatLng, Poi } from './types.js';
 
 /**
- * 「完整社区」对标清单。
+ * 「完整社区」参考对标清单。
  * 阈值参考《完整居住社区建设标准（试行）》（住建部 2020）与《社区生活圈规划技术指南》
  * （TD/T 1062-2021）的通行口径取整，作为可配置的参考基线，非规范原文距离。
+ * 检索失败的类别按「无法判断」处理，不输出「缺失」结论。
  */
 
 const ITEMS: { id: string; name: string; category: keyof typeof CATEGORY_MAP | string; thresholdM: number; basis: string }[] = [
@@ -21,16 +22,23 @@ const ITEMS: { id: string; name: string; category: keyof typeof CATEGORY_MAP | s
   { id: 'hospital', name: '医院（门诊级以上）', category: 'hospital', thresholdM: 3000, basis: '参考口径：医院允许较大服务半径' }
 ];
 
-export function buildChecklist(center: LatLng, pois: Poi[]): ChecklistItem[] {
+export function buildChecklist(
+  center: LatLng,
+  pois: Poi[],
+  opts: { failedCategories?: string[] } = {}
+): ChecklistItem[] {
+  const failed = new Set(opts.failedCategories ?? []);
   return ITEMS.map((item) => {
-    const list = pois.filter((p) => p.category === item.category);
-    const nearest = nearestPoiM(center, list);
+    const unavailable = failed.has(String(item.category));
+    const list = unavailable ? [] : pois.filter((p) => p.category === item.category);
+    const nearest = unavailable ? null : nearestPoiM(center, list);
     return {
       id: item.id,
       name: item.name,
       basis: item.basis,
       thresholdM: item.thresholdM,
-      met: nearest != null && nearest.distM <= item.thresholdM,
+      met: unavailable ? null : nearest != null && nearest.distM <= item.thresholdM,
+      unavailable,
       nearestM: nearest ? Math.round(nearest.distM) : null,
       count: list.length
     };

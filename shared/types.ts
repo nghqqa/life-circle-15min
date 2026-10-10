@@ -118,15 +118,17 @@ export interface GapAnalysis {
   cellM: number;
   weightGrid: Float64Array;
   totalWeight: number;
-  /** 每格缺失核心设施数 0-3 */
+  /** 每格缺失核心设施数 0-3（检索失败类别不计入缺失） */
   missingGrid: Uint8Array;
   /** 每个核心类别的覆盖掩码（0/1），供选址引擎精确归因 */
   coveredMasks: Record<string, Uint8Array>;
   patches: GapPatch[];
-  /** 人口加权覆盖率：三件套齐全的居住权重占比 */
-  coverageShare: number;
-  /** 人口加权重度缺失占比 */
-  severeShare: number;
+  /** 人口加权覆盖率：三件套齐全的居住权重占比；无居住采样时为 null（无法评估） */
+  coverageShare: number | null;
+  /** 人口加权重度缺失占比；无居住采样时为 null */
+  severeShare: number | null;
+  /** 无居住采样（覆盖率无法评估） */
+  coverageUnavailable: boolean;
   /** 盲区点位数（缺任意一项核心设施） */
   blindPoints: number;
 }
@@ -164,7 +166,10 @@ export interface ChecklistItem {
   name: string;
   basis: string;
   thresholdM: number;
-  met: boolean;
+  /** true=达标 / false=缺失 / null=无法判断（该类检索失败） */
+  met: boolean | null;
+  /** 该类检索失败，无法判断 */
+  unavailable?: boolean;
   nearestM: number | null;
   count: number;
 }

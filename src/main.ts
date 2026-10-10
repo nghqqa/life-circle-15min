@@ -4,6 +4,7 @@ import {
   DEFAULT_CENTER,
   PERSONA_MAP,
   THRESHOLDS,
+  buildAnalysisWarnings,
   buildChecklist,
   buildIsochroneModel,
   buildTimeField,
@@ -18,6 +19,7 @@ import {
   interpAngle,
   planFacilitiesFromCoverage,
   type AnalysisResult,
+  type CategoryId,
   type ChannelName,
   type LatLng,
   type Poi,
@@ -342,14 +344,18 @@ async function analyze() {
 
     // 4) POI 检索
     hud.doing(3, '民生设施分类检索…');
-    const pois = await searchAllCategories(chain, (note) => hud.note(note), stepUsage);
+    const { pois, failedCategories, usedMock: poiUsedMock, poiOk } = await searchAllCategories(
+      chain,
+      (note) => hud.note(note),
+      stepUsage
+    );
     hud.done(3, 'server', 0);
 
-    // 5) 盲区识别 + 评分 + 清单 + 累积机会
+    // 5) 盲区识别 + 评分 + 清单 + 累积机会（失败类别按「无法判断」贯通）
     hud.doing(4, '人口加权盲区聚合 · 四维评分');
-    const gap = analyzeGaps(field, pois);
-    const score = computeScore(state.center, pois, gap);
-    const checklist = buildChecklist(state.center, pois);
+    const gap = analyzeGaps(field, pois, { failedCategories });
+    const score = computeScore(state.center, pois, gap, { failedCategories });
+    const checklist = buildChecklist(state.center, pois, { failedCategories });
     const cumulative = cumulativeOpportunities(field, pois, state.minutes);
     hud.done(4, 'server', 0);
 
@@ -365,6 +371,17 @@ async function analyze() {
       crossings = await scanCrossings(chain, state.center, probeM, stepUsage);
     }
     hud.done(6, 'server', 0);
+
+    // 警告：与共享引擎同一生成器，区分「数据缺失」「模型合成」「真实结论」
+    const warnings = buildAnalysisWarnings({
+      okProbes,
+      degradedDirs: model.degradedDirs,
+      probes: rm.value,
+      probeStraightM: probeM,
+      failedCategories,
+      totalWeight: gap.totalWeight,
+      poiOk
+    });
 
     // 渲染
     const result: AnalysisResult = {
@@ -383,9 +400,11 @@ async function analyze() {
       planSites,
       cumulative,
       accuracy,
+      warnings,
+      failedCategories,
       crossings,
       steps: stepUsage,
-      mock: rm.channel === 'mock'
+      mock: rm.channel === 'mock' || poiUsedMock
     };
     state.result = result;
 
@@ -411,11 +430,13 @@ async function searchAllCategories(
   chain: GatewayChain,
   onNote: (s: string) => void,
   stepUsage: AnalysisResult['steps']
-): Promise<Poi[]> {
+): Promise<{ pois: Poi[]; failedCategories: CategoryId[]; usedMock: boolean; poiOk: boolean }> {
   const tasks = CATEGORIES.filter((c) => c.id !== 'residential').flatMap((c) => c.keywords.map((kw) => ({ cat: c, kw })));
   const out: Poi[] = [];
+  const failedKw = new Set<string>();
   let done = 0;
   let channel: ChannelName = 'server';
+  let usedMock = false;
   let totalMs = 0;
 
   const t0 = performance.now();
@@ -427,10 +448,12 @@ async function searchAllCategories(
         const r = await chain.searchPoi({ query: t.kw, location: state.center, radiusM: THRESHOLDS.searchRadiusM });
         for (const p of r.value) out.push({ ...p, category: t.cat.id });
         channel = r.channel;
+        if (r.channel === 'mock') usedMock = true;
         done++;
         onNote(`POI 检索 ${done}：${t.kw} → ${r.value.length} 条（${CHANNEL_LABEL[r.channel]}）`);
       } catch {
         done++;
+        failedKw.add(t.kw);
       }
       await new Promise((res) => setTimeout(res, 450));
     }
@@ -443,13 +466,16 @@ async function searchAllCategories(
       const r = await chain.searchPoi({ query: kw, location: state.center, radiusM: THRESHOLDS.searchRadiusM });
       for (const p of r.value) out.push({ ...p, category: 'residential' as const });
       channel = r.channel;
+      if (r.channel === 'mock') usedMock = true;
     } catch {
       /* 忽略 */
     }
   }
   totalMs = Math.round(performance.now() - t0);
+  const failedCategories = CATEGORIES.filter((c) => c.keywords.every((kw) => failedKw.has(kw))).map((c) => c.id);
+  const poiOk = CATEGORIES.filter((c) => c.scored && !failedCategories.includes(c.id)).some((c) => (out.filter((p) => p.category === c.id).length > 0));
   stepUsage.push({ name: '设施 POI 检索', usage: { channel, ms: totalMs, note: `共 ${out.length} 条` } });
-  return dedupePois(out);
+  return { pois: dedupePois(out), failedCategories, usedMock, poiOk };
 }
 
 async function scanCrossings(

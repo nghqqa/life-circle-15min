@@ -42,7 +42,15 @@ function guessCategory(query: string): CategoryId {
 }
 
 export class BaiduServerProvider implements AnalysisProvider {
-  constructor(private ak: string) {}
+  constructor(
+    private ak: string,
+    /** 上游调用计数回调（批量任务用于真实请求预算） */
+    private onUpstreamCall?: () => void
+  ) {}
+
+  private count() {
+    this.onUpstreamCall?.();
+  }
 
   async geocode(address: string): Promise<LatLng> {
     const key = `geo:${address}`;
@@ -67,6 +75,7 @@ export class BaiduServerProvider implements AnalysisProvider {
   async reverseGeocode(p: LatLng): Promise<string> {
     const key = `rev:${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
     return withCache(geoCache, key, async () => {
+      this.count();
       const r = await callBaidu(
         '/reverse_geocoding/v3/',
         { location: `${p.lat},${p.lng}` },
@@ -92,9 +101,11 @@ export class BaiduServerProvider implements AnalysisProvider {
     const key = `place:${JSON.stringify(params)}`;
     return withCache(placeCache, key, async () => {
       // 上游偶发 status=1（Internal Service Error）为瞬态错误：重试两次，配额类错误不重试
+      this.count();
       let r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
       for (let retry = 0; retry < 2 && this.isTransient(r); retry++) {
         await new Promise((res) => setTimeout(res, 400 * (retry + 1)));
+        this.count();
         r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
       }
       if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `place ${r.body?.status}`);
@@ -122,7 +133,8 @@ export class BaiduServerProvider implements AnalysisProvider {
       const destStr = slice.map((d) => `${d.lat},${d.lng}`).join('|');
       const key = `rt:${origin.lat},${origin.lng}:${destStr}`;
       const probes = await withCache(routeCache, key, async () => {
-        let r = await callBaidu(
+        this.count();
+      let r = await callBaidu(
           '/routematrix/v2/walking',
           { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
           buckets.route,
@@ -131,6 +143,7 @@ export class BaiduServerProvider implements AnalysisProvider {
         if (!r.ok || r.body?.status !== 0) {
           if (this.isTransient(r)) {
             await new Promise((res) => setTimeout(res, 500));
+            this.count();
             r = await callBaidu(
               '/routematrix/v2/walking',
               { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
@@ -159,6 +172,10 @@ export class BaiduServerProvider implements AnalysisProvider {
   }
 }
 
-export function analyzeWithServerProvider(params: AnalyzeParams, ak: string): Promise<AnalysisReport> {
-  return runAnalysis(params, new BaiduServerProvider(ak));
+export function analyzeWithServerProvider(
+  params: AnalyzeParams,
+  ak: string,
+  onUpstreamCall?: () => void
+): Promise<AnalysisReport> {
+  return runAnalysis(params, new BaiduServerProvider(ak, onUpstreamCall));
 }

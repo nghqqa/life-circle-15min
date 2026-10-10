@@ -4,7 +4,7 @@ import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
-import { startStreetBatch, getJob, sweepJobs } from './batch.js';
+import { startStreetBatch, getJob, cancelJob, sweepJobs } from './batch.js';
 
 /**
  * 百度 Web API 代理：
@@ -273,6 +273,12 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
     }
     const { communities, summary, ...rest } = job;
     res.json({ status: 0, job: { ...rest, communities, summary } });
+  });
+
+  // POST /api/batch/cancel/:jobId → 取消运行中的任务（保护上游配额）
+  router.post('/batch/cancel/:jobId', (req, res) => {
+    const ok = cancelJob(String(req.params.jobId));
+    res.json({ status: ok ? 0 : -1, message: ok ? '取消信号已发送' : '任务不存在' });
   });
 
   // OpenAPI 描述（供 /docs 与多端接入）
