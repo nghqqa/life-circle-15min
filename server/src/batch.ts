@@ -51,11 +51,11 @@ function jobId(): string {
   return `bj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function searchResidentials(ak: string, center: LatLng, radiusM: number): Promise<Poi[]> {
+async function searchResidentials(ak: string, center: LatLng, radiusM: number): Promise<{ pois: Poi[]; quotaExhausted: boolean }> {
   const cache = new TtlCache<Poi[]>(6 * 3600_000, 500);
   const key = `res:${center.lat.toFixed(4)},${center.lng.toFixed(4)}:${radiusM}`;
   const hit = cache.get(key);
-  if (hit) return hit;
+  if (hit) return { pois: hit, quotaExhausted: false };
   const pois: Poi[] = [];
   let quotaExhausted = false;
   for (let page = 0; page < 4; page++) {
@@ -107,7 +107,7 @@ async function searchResidentials(ak: string, center: LatLng, radiusM: number): 
   }
   const cleaned = dedupePois(pois);
   cache.set(key, cleaned);
-  return cleaned;
+  return { pois: cleaned, quotaExhausted: !cleaned.length && quotaExhausted };
 }
 
 /** 空间抽稀：保证采样点在片区内分布均匀（按 300m 网格去重），再截断至上限 */
@@ -162,7 +162,12 @@ export function startStreetBatch(
 
   void (async () => {
     try {
-      const residentials = await searchResidentials(ak, center, radiusM);
+      const { pois: residentials, quotaExhausted } = await searchResidentials(ak, center, radiusM);
+      if (quotaExhausted) {
+        job.status = 'error';
+        job.error = '百度检索当日配额已耗尽（status 302），请明日重试或更换配额更高的 AK';
+        return;
+      }
       const samples = thinCommunities(residentials, maxCommunities);
       // 限制相邻采样点过近（<300m）重复
       const filtered: Poi[] = [];
