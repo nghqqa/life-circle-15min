@@ -96,6 +96,7 @@ async function init() {
       state.centerName = '';
       map.setCenter(p, '中心点');
       setPickMode(false);
+      void nameCenter(p);
     });
     window.__LC_MAP__ = map.map;
     if (!ok) document.getElementById('map-placeholder')?.classList.remove('hidden');
@@ -190,6 +191,21 @@ function setPickMode(on: boolean) {
   if (on) banner('选点模式：在地图上点击选择新的中心点', 'info', 3500);
 }
 
+/** 逆地理编码：为选定的中心点补一个可读地名（尽力而为，失败保持坐标显示） */
+async function nameCenter(p: LatLng) {
+  const chain = state.chain;
+  if (!chain) return;
+  try {
+    const r = await chain.reverseGeocode(p);
+    if (state.center.lat === p.lat && state.center.lng === p.lng) {
+      state.centerName = r.value;
+      map.setCenter(p, r.value);
+    }
+  } catch {
+    /* 保持坐标显示 */
+  }
+}
+
 function closeDrawers() {
   document.body.classList.remove('sidebar-open', 'panel-open');
 }
@@ -225,7 +241,7 @@ async function analyze() {
   window.__LC_MOCK_CTX__ = { minutes: state.minutes, speed: persona.speed };
 
   try {
-    // 1) 中心定位（有地址输入时地理编码）
+    // 1) 中心定位（有地址输入时地理编码；无名称的中心点尝试逆地理编码补地名）
     hud.doing(0);
     const addr = (document.getElementById('addr-input') as HTMLInputElement).value.trim();
     if (addr && addr !== state.centerName) {
@@ -237,6 +253,14 @@ async function analyze() {
       } catch {
         banner('地理编码失败，使用当前中心点继续', 'warn');
         stepUsage.push({ name: '中心定位', usage: { channel: 'mock', ms: 0, note: '失败降级' } });
+      }
+    } else if (!state.centerName) {
+      try {
+        const r = await chain.reverseGeocode(state.center);
+        state.centerName = r.value;
+        stepUsage.push({ name: '中心定位', usage: { channel: r.channel, ms: r.ms, note: '逆地理编码' } });
+      } catch {
+        stepUsage.push({ name: '中心定位', usage: { channel: state.mock ? 'mock' : 'server', ms: 0, note: '使用当前中心点' } });
       }
     } else {
       stepUsage.push({ name: '中心定位', usage: { channel: state.mock ? 'mock' : 'server', ms: 0, note: '使用当前中心点' } });

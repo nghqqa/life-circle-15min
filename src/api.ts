@@ -31,6 +31,8 @@ export interface PoiSearchParams {
 export interface Gateway {
   readonly name: ChannelName;
   geocode(address: string): Promise<GeocodeResult>;
+  /** 逆地理编码：坐标 → 地名描述 */
+  reverseGeocode(p: LatLng): Promise<string>;
   searchPoi(params: PoiSearchParams): Promise<Poi[]>;
   routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]>;
   walkingRoute(origin: LatLng, dest: LatLng): Promise<RouteProbe | null>;
@@ -77,6 +79,17 @@ export class ServerGateway implements Gateway {
     const r = await this.get('/api/baidu/geocoding/v3', { address });
     if (r.status !== 0) throw new Error(r.message ?? `geocode status ${r.status}`);
     return { lat: r.result.location.lat, lng: r.result.location.lng, level: r.result.level };
+  }
+
+  async reverseGeocode(p: LatLng): Promise<string> {
+    const r = await this.get('/api/baidu/reverse_geocoding/v3', {
+      location: `${p.lat},${p.lng}`
+    });
+    if (r.status !== 0) throw new Error(r.message ?? `reverse status ${r.status}`);
+    const rg = r.result ?? {};
+    const name = rg.formatted_address ?? rg.sematic_description ?? '';
+    if (!name) throw new Error('reverse empty');
+    return String(name);
   }
 
   async searchPoi(params: PoiSearchParams): Promise<Poi[]> {
@@ -168,6 +181,39 @@ export class ClientGateway implements Gateway {
     const r = await this.jsonp('https://api.map.baidu.com/geocoding/v3/', { address });
     if (r.status !== 0) throw new Error(`geocode status ${r.status}`);
     return { lat: r.result.location.lat, lng: r.result.location.lng, level: r.result.level };
+  }
+
+  async reverseGeocode(p: LatLng): Promise<string> {
+    if (window.BMapGL) {
+      return await this.glReverseGeocode(p);
+    }
+    const r = await this.jsonp('https://api.map.baidu.com/reverse_geocoding/v3/', {
+      location: `${p.lat},${p.lng}`
+    });
+    if (r.status !== 0) throw new Error(`reverse status ${r.status}`);
+    const name = r.result?.formatted_address;
+    if (!name) throw new Error('reverse empty');
+    return String(name);
+  }
+
+  private glReverseGeocode(p: LatLng): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('gl reverse timeout')), 8000);
+      try {
+        new window.BMapGL.Geocoder().getLocation(
+          new window.BMapGL.Point(p.lng, p.lat),
+          (r: any) => {
+            clearTimeout(timer);
+            const name = r?.address ?? r?.content?.address;
+            if (name) resolve(String(name));
+            else reject(new Error('gl reverse empty'));
+          }
+        );
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e as Error);
+      }
+    });
   }
 
   async searchPoi(params: PoiSearchParams): Promise<Poi[]> {
@@ -390,6 +436,11 @@ export class MockGateway implements Gateway {
     return { lat: DEFAULT_CENTER.lat, lng: DEFAULT_CENTER.lng, level: '演示' };
   }
 
+  async reverseGeocode(p: LatLng): Promise<string> {
+    void p;
+    return `演示位置（${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}）`;
+  }
+
   async searchPoi(params: PoiSearchParams): Promise<Poi[]> {
     const all = generateMockPois(await this.center(), window.__LC_MOCK_SEED__ ?? 42);
     const kw = params.query;
@@ -566,6 +617,10 @@ export class GatewayChain {
 
   geocode(address: string) {
     return this.run((g) => g.geocode(address), 'geocode');
+  }
+
+  reverseGeocode(p: LatLng) {
+    return this.run((g) => g.reverseGeocode(p), 'reverse-geocode');
   }
 
   searchPoi(params: PoiSearchParams) {
