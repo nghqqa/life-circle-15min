@@ -1,0 +1,47 @@
+════════════════════════════════════════════════════════
+圈点 —— 15 分钟生活圈智能体检与规划助手
+参赛材料提交说明
+2026 上海开源软件应用创新大赛 · 开源 AI 工具赛道 · 百度地图企业赛题
+════════════════════════════════════════════════════════
+
+一、材料清单
+  1. 圈点-参赛作品介绍.pdf …… 作品介绍文档（14 页：项目背景、核心功能、
+     技术架构、诊断口径、规划功能、人群差异、实测验证、街道/城区批量、
+     工程与开源、可信机制、交付与展望）
+  2. 圈点-演示视频-8分钟讲解版.mp4 …… 作品演示视频（8 分钟，含完整
+     使用流程、真实社区实测数据与规划工作台演示）
+  3. 提交说明.txt …… 本文件
+
+二、代码仓库（完整可运行源码）
+  GitHub：https://github.com/nghqqa/life-circle-15min
+  Gitee ：https://gitee.com/nghqqa/life-circle-15min
+  · MIT 开源协议；README 含快速开始指引
+  · 自动化测试 38 项全部通过；类型检查与前后端构建通过（GitHub Actions CI）
+  · 代码版本：4f981b2（与介绍文档标注版本一致）
+
+三、演示复现指引（评审方快速跑通）
+  环境：Node.js ≥ 20
+    git clone https://github.com/nghqqa/life-circle-15min.git
+    cd life-circle-15min
+    npm install
+    npm run dev
+  → 打开 http://localhost:5173，无需任何密钥即进入「演示模式」
+    （确定性合成数据，完整体验：定位 → 体检 → 热力面 → 盲区 →
+     规划建议采纳 → 对标清单 → 街道体检 全流程）
+
+  接入真实数据（可选）：
+    cp .env.example .env
+    填入百度地图开放平台的浏览器端与服务端 AK 后重启，
+    即可以真实路网数据完成体检（服务端通道 48 向批量算路）。
+
+  Docker 一键部署：
+    cp .env.example .env && docker compose up --build
+    访问 http://localhost:8787（API 文档 /api/docs）
+
+四、技术说明
+  · 数据能力：百度地图地理编码 v3、逆地理编码 v3、POI 检索 place v2、
+    批量算路 routematrix v2、步行规划 direction v2、GL JS API 渲染
+  · 实测案例：上饶市江西师范大学数字产业学院（E 级）、信州区中心广场
+    （C 级）、东市街道 10 小区批量（均分 88.4）、信州区城区试点（14 小区）
+  · 详细技术设计见仓库 docs/TECH_DESIGN.md，
+    真实对比测试报告见 docs/COMPARISON_TEST.md
