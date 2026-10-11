@@ -47,7 +47,7 @@ interface StreetCommunity {
 }
 let streetJobId: string | null = null;
 let streetPollTimer: ReturnType<typeof setInterval> | null = null;
-let streetLastSnapshot: { status: string; done: number; total: number; current: string; communities: StreetCommunity[]; summary: any; error?: string } | null = null;
+let streetLastSnapshot: { status: string; done: number; total: number; current: string; communities: StreetCommunity[]; summary: any; error?: string; persona?: string } | null = null;
 
 export function setResult(r: AnalysisResult | null) {
   if (r !== currentResult) {
@@ -550,7 +550,7 @@ function wireStreet() {
         return;
       }
       streetJobId = data.jobId;
-      streetLastSnapshot = { status: 'running', done: 0, total: data.total ?? 0, current: '排队中…', communities: [], summary: null };
+      streetLastSnapshot = { status: 'running', done: 0, total: data.total ?? 0, current: '排队中…', communities: [], summary: null, persona: (document.getElementById('street-persona') as HTMLSelectElement)?.value };
       startPolling();
     } catch (e) {
       banner(`任务发起失败：${(e as Error).message}`);
@@ -578,7 +578,8 @@ function startPolling() {
         current: data.job.current,
         communities: data.job.communities ?? [],
         summary: data.job.summary,
-        error: data.job.error
+        error: data.job.error,
+        persona: data.job.persona
       };
       updateStreetStatus();
       if (data.job.status !== 'running' && streetPollTimer) {
@@ -637,7 +638,7 @@ function updateStreetStatus() {
     .join('');
   el.innerHTML = `
   <div class="kpi-row">
-    <div class="kpi"><b>${sum.avgScore ?? '—'}</b><span>街道均分</span></div>
+    <div class="kpi"><b>${sum.avgScore ?? '—'}</b><span>街道均分${s.persona && s.persona !== 'adult' ? `（${PERSONA_MAP[s.persona as keyof typeof PERSONA_MAP]?.name ?? s.persona}口径）` : ''}</span></div>
     <div class="kpi"><b>${s.total}</b><span>采样小区</span></div>
     <div class="kpi"><b>${sum.scoreGap ?? 0}</b><span>最优最差极差</span></div>
   </div>
@@ -658,7 +659,7 @@ function updateStreetStatus() {
   <button id="btn-weak-csv" class="btn ghost">导出薄弱社区 CSV</button>
   <div class="rpt-sub">说明：排名为<b>片区抽样口径</b>（采样半径内住宅小区），非行政街道全域普查；小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
   document.getElementById('btn-weak-csv')?.addEventListener('click', () => {
-    try { if (streetJobId) downloadText(weakCommunityCsv(s.communities, streetJobId), '圈点-薄弱社区.csv', 'text/csv;charset=utf-8'); }
+    try { if (streetJobId) downloadText(weakCommunityCsv(s.communities, streetJobId, new Date().toISOString(), { persona: s.persona, ruleVersion: RULE_VERSION }), '圈点-薄弱社区.csv', 'text/csv;charset=utf-8'); }
     catch { banner('薄弱社区表导出失败，任务结果已保留，请重试。', 'warn'); }
   });
 }

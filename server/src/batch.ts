@@ -68,6 +68,8 @@ export interface BatchJob {
   } | null;
   cancelled?: boolean;
   error?: string;
+  /** F7：本任务的人群口径（随结果持久化，脱离页面可还原） */
+  persona?: 'adult' | 'elderly' | 'child';
 }
 
 const jobs = new Map<string, BatchJob>();
@@ -199,6 +201,7 @@ export function startStreetBatch(
     communities: [],
     summary: null
   };
+  (job as BatchJob & { persona?: 'adult' | 'elderly' | 'child' }).persona = persona;
   jobs.set(job.id, job);
 
   void (async () => {
