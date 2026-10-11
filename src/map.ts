@@ -294,25 +294,27 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-/** 中心点图标：同心圆（生活圈母题），虚线外环 + 实心核 */
+/** 中心点图标：同心圆（生活圈母题），虚线外环 + 实心核；2x 位图保证 HiDPI 清晰 */
 function iconCenter(): any {
   const size = 30;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size * 2}" height="${size * 2}" viewBox="0 0 ${size} ${size}">
     <circle cx="${size / 2}" cy="${size / 2}" r="13" fill="rgba(47,111,237,0.18)" stroke="#2f6fed" stroke-width="1.6" stroke-dasharray="3.5 2.6"/>
     <circle cx="${size / 2}" cy="${size / 2}" r="4.6" fill="#2f6fed" stroke="#ffffff" stroke-width="2"/>
   </svg>`;
   return new BMapGL.Icon(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, new BMapGL.Size(size, size), {
-    anchor: new BMapGL.Size(size / 2, size / 2)
+    anchor: new BMapGL.Size(size / 2, size / 2),
+    imageSize: new BMapGL.Size(size * 2, size * 2)
   });
 }
 
 function iconFor(color: string, glyph: string, size = 26): any {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size * 2}" height="${size * 2}" viewBox="0 0 ${size} ${size}">
     <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="${color}" stroke="#fff" stroke-width="2"/>
     <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="${Math.round(size * 0.42)}" fill="#fff" font-family="PingFang SC, Microsoft YaHei, sans-serif">${escapeHtml(glyph)}</text>
   </svg>`;
   const icon = new BMapGL.Icon(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, new BMapGL.Size(size, size), {
-    anchor: new BMapGL.Size(size / 2, size / 2)
+    anchor: new BMapGL.Size(size / 2, size / 2),
+    imageSize: new BMapGL.Size(size * 2, size * 2)
   });
   return icon;
 }
