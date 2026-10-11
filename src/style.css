@@ -129,6 +129,22 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 
 .card ol { margin: 0; padding-left: 18px; color: var(--ink-2); line-height: 1.8; }
 .card.muted { color: var(--ink-2); }
 
+/* ---------- 本地项目 ---------- */
+#projects-card label { color: var(--ink-2); font-size: 12px; cursor: default; }
+#project-name, #project-list { width: 100%; min-width: 0; font-family: var(--font); font-size: 12px; }
+#project-name {
+  height: 34px; padding: 0 8px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line-2); border-radius: var(--radius-s);
+}
+#project-name:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.14); }
+.project-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 7px 0; }
+.project-actions .btn { padding: 0 6px; font-size: 12px; }
+.project-status, .project-note { margin: 8px 0 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.project-status { color: var(--ok); }
+.project-status[data-error="true"] { color: var(--warn); }
+.project-note { color: var(--ink-2); }
+#projects-card :disabled { cursor: not-allowed; }
+
 .heat-legend .grad {
   display: block; height: 10px; border-radius: 5px;
   background: linear-gradient(90deg, #1b5e20, #388e3c 23%, #9e9d24 41%, #fbc02d 55%, #fb8c00 68%, #e53935 82%, #921818);
@@ -166,9 +182,9 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 
   width: 396px; flex: 0 0 auto; background: var(--card); border-left: 1px solid var(--line);
   display: flex; flex-direction: column; min-height: 0; z-index: 30;
 }
-#panel-tabs { display: flex; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+#panel-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
 #panel-tabs button {
-  flex: 1; padding: 11px 4px; border: none; background: none; font-size: 13px; font-family: var(--font);
+  flex: 1 0 23%; padding: 11px 4px; border: none; background: none; font-size: 13px; font-family: var(--font); white-space: nowrap;
   color: var(--ink-2); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
@@ -182,7 +198,14 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 
 .empty-tip .empty-title { font-size: 15px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
 .empty-tip ol { text-align: left; margin: 0 auto; max-width: 250px; padding-left: 20px; line-height: 2.1; color: var(--ink-2); }
 .empty-tip ol b { color: var(--ink); }
-#panel-footer { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--card); }
+#panel-footer { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--card); }
+.comparison-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.comparison-actions .plan-card { padding: 10px; min-width: 0; }
+.comparison-actions .btn { margin: 3px 0; padding: 5px 9px; }
+.comparison-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.comparison-table { table-layout: fixed; overflow-wrap: anywhere; }
+.comparison-table th:first-child { width: 30%; }
+table.tbl.comparison-table th, table.tbl.comparison-table td { padding: 8px 4px; font-size: 12px; color: var(--ink); white-space: normal; }
 
 .rpt-grade { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
 .grade-circle {
@@ -280,6 +303,8 @@ table.tbl .dot { display: inline-block; width: 8px; height: 8px; border-radius: 
 }
 
 .hidden { display: none !important; }
+.report-source { overflow-wrap: anywhere; margin-bottom: 8px; }
+.data-quality .rpt-sub { font-size: 10px; }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 1440px) {

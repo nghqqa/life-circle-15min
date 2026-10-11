@@ -9,6 +9,15 @@ import type { GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
  */
 
 export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'batch';
+export interface BatchMapCommunity {
+  name: string;
+  center: LatLng;
+  score: number;
+  grade: string;
+  coverageShare: number | null;
+  coverageUnavailable?: boolean;
+  dominantMissing: string | null;
+}
 
 export class MapView {
   map: any = null;
@@ -70,7 +79,7 @@ export class MapView {
     this.centerMarker = new BMapGL.Marker(pt, { icon: iconCenter() });
     this.map.addOverlay(this.centerMarker);
     if (label) {
-      const lbl = new BMapGL.Label(label, {
+      const lbl = new BMapGL.Label(escapeHtml(label), {
         position: pt,
         offset: new BMapGL.Size(14, -14)
       });
@@ -116,7 +125,7 @@ export class MapView {
   }
 
   /** 街道级批量结果：按等级着色的小区标注（点击弹出摘要） */
-  setBatchResults(communities: { name: string; center: LatLng; score: number; grade: string; coverageShare: number; dominantMissing: string | null }[]) {
+  setBatchResults(communities: BatchMapCommunity[]) {
     this.data.batch = communities;
     this.renderLayer('batch');
   }
@@ -182,7 +191,7 @@ export class MapView {
         });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:180px"><b>${p.name}</b><br/><span style="color:#5a6478">${def.name} · ${p.address ?? ''}</span></div>`,
+            `<div style="font-size:13px;min-width:180px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span></div>`,
             { width: 220 }
           );
           map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
@@ -235,7 +244,7 @@ export class MapView {
         const marker = new BMapGL.Marker(pt, { icon: iconFor('#00bcd4', `补${site.rank}`) });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:220px"><b>规划建议 #${site.rank}：补建${catName(site.category)}</b><br/>${site.rationale}</div>`,
+            `<div style="font-size:13px;min-width:220px"><b>规划建议 #${site.rank}：补建${catName(site.category)}</b><br/>${escapeHtml(site.rationale)}</div>`,
             { width: 250 }
           );
           map.openInfoWindow(info, pt);
@@ -258,13 +267,14 @@ export class MapView {
       const gradeColor: Record<string, string> = {
         A: '#2f9e44', B: '#74b816', C: '#f08c00', D: '#e8590c', E: '#e03131', '-': '#8a93a6'
       };
-      for (const c of this.data.batch as any[]) {
+      for (const c of this.data.batch as BatchMapCommunity[]) {
         const pt = new BMapGL.Point(c.center.lng, c.center.lat);
         const color = gradeColor[c.grade] ?? '#8a93a6';
         const marker = new BMapGL.Marker(pt, { icon: iconFor(color, c.grade === '-' ? '?' : String(c.grade)) });
+        const coverage = c.coverageUnavailable || c.coverageShare == null ? '无法评估' : `${Math.round(c.coverageShare * 100)}%`;
         const summary = c.score >= 0
-          ? `<b>${c.name}</b><br/>评分 ${c.score}（${c.grade} 级）· 人口覆盖率 ${Math.round(c.coverageShare * 100)}%${c.dominantMissing ? `<br/>主要缺失：${catName(c.dominantMissing)}` : ''}`
-          : `<b>${c.name}</b><br/>分析失败`;
+          ? `<b>${escapeHtml(c.name)}</b><br/>评分 ${c.score}（${escapeHtml(c.grade)} 级）· 人口覆盖率 ${coverage}${c.dominantMissing ? `<br/>主要缺失：${escapeHtml(catName(c.dominantMissing))}` : ''}`
+          : `<b>${escapeHtml(c.name)}</b><br/>分析失败`;
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(`<div style="font-size:13px;min-width:200px">${summary}</div>`, { width: 240 });
           map.openInfoWindow(info, pt);
@@ -278,6 +288,10 @@ export class MapView {
 
 function catName(id: string): string {
   return CATEGORY_MAP[id as keyof typeof CATEGORY_MAP]?.name ?? id;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 /** 中心点图标：同心圆（生活圈母题），虚线外环 + 实心核 */
@@ -295,7 +309,7 @@ function iconCenter(): any {
 function iconFor(color: string, glyph: string, size = 26): any {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
     <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="${color}" stroke="#fff" stroke-width="2"/>
-    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="${Math.round(size * 0.42)}" fill="#fff" font-family="PingFang SC, Microsoft YaHei, sans-serif">${glyph}</text>
+    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="${Math.round(size * 0.42)}" fill="#fff" font-family="PingFang SC, Microsoft YaHei, sans-serif">${escapeHtml(glyph)}</text>
   </svg>`;
   const icon = new BMapGL.Icon(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, new BMapGL.Size(size, size), {
     anchor: new BMapGL.Size(size / 2, size / 2)

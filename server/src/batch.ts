@@ -1,5 +1,6 @@
 import { dedupePois } from '../../shared/poi.js';
 import { localDistM } from '../../shared/geo.js';
+import { CATEGORY_MAP } from '../../shared/config.js';
 import type { LatLng, Poi } from '../../shared/types.js';
 import { analyzeWithServerProvider } from './provider.js';
 import { buckets, callBaidu } from './baidu.js';
@@ -250,8 +251,11 @@ export function startStreetBatch(
             job.error = `上游配额耗尽，任务中止于第 ${job.done + 1}/${job.total} 个小区（${p.name}）`;
             return;
           }
-          // 数据不完整（设施检索全部失败/被截断）→ 计为失败，不作为 0 分结果参与排名
-          if (report.incomplete) throw new Error('数据不完整：该小区设施检索全部失败');
+          // 部分截断不等于社区分析失败；住宅采样成功也不能代替民生设施检索成功。
+          const hasUsableFacilities = report.poiSearch.some((s) =>
+            CATEGORY_MAP[s.category].scored && (s.status === 'complete' || s.legacy)
+          );
+          if (!hasUsableFacilities) throw new Error('数据不完整：该小区设施检索未取得可用类别');
           job.consecutiveFailures = 0;
           job.communities.push({
             name: report.centerName.includes(',') ? p.name : report.centerName,

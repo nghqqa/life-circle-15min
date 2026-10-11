@@ -5,6 +5,10 @@ import type { AnalysisResult, GapPatch, LatLng, PlanSite } from '../shared/types
 import { renderCharts } from './charts.js';
 import { banner, CHANNEL_LABEL } from './hud.js';
 import { map } from './main.js';
+import type { WorkbenchSnapshot } from './projects.js';
+import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
+import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
+import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
 
@@ -14,6 +18,21 @@ let currentTab = 'report';
 // ---- 交互式规划工作台状态（新分析时重置）----
 let acceptedSites: PlanSite[] = [];
 let rejectedSites: PlanSite[] = [];
+let scenarios: PlanScenarios = {};
+let workbenchListener: (() => void) | null = null;
+
+export function onWorkbenchChange(listener: () => void) { workbenchListener = listener; }
+export function getWorkbenchSnapshot(): WorkbenchSnapshot {
+  return structuredClone({ acceptedSites, rejectedSites, ...(Object.keys(scenarios).length ? { scenarios } : {}) });
+}
+export function setWorkbenchState(snapshot: WorkbenchSnapshot) {
+  acceptedSites = structuredClone(snapshot.acceptedSites);
+  rejectedSites = structuredClone(snapshot.rejectedSites);
+  scenarios = structuredClone(snapshot.scenarios ?? {});
+}
+export function displayedPlanSites(): PlanSite[] {
+  return currentResult ? [...acceptedSites, ...currentSites(currentResult)] : [];
+}
 
 // ---- 街道批量体检状态 ----
 interface StreetCommunity {
@@ -34,6 +53,7 @@ export function setResult(r: AnalysisResult | null) {
   if (r !== currentResult) {
     acceptedSites = [];
     rejectedSites = [];
+    scenarios = {};
   }
   currentResult = r;
 }
@@ -49,7 +69,8 @@ export function getWorkbenchState() {
       afterPct: s.afterPct
     })),
     rejectedSites: rejectedSites.map((s) => ({ category: s.category, latLng: s.latLng })),
-    currentSuggestions: currentResult ? currentSites(currentResult).length : 0
+    currentSuggestions: currentResult ? currentSites(currentResult).length : 0,
+    ...(Object.keys(scenarios).length ? { scenarios: structuredClone(scenarios) } : {})
   };
 }
 
@@ -77,7 +98,7 @@ export function render() {
     footer.classList.add('hidden');
     return;
   }
-  footer.classList.toggle('hidden', currentTab !== 'report' || !currentResult);
+  footer.classList.toggle('hidden', !['report', 'compare'].includes(currentTab) || !currentResult);
   const r = currentResult;
   switch (currentTab) {
     case 'report':
@@ -87,15 +108,17 @@ export function render() {
     case 'checklist': if (r) body.innerHTML = checklistHtml(r); break;
     case 'gaps': if (r) body.innerHTML = gapsHtml(r); break;
     case 'plan': body.innerHTML = r ? planHtml(r) : '<div class="empty-tip">先完成一次体检</div>'; wirePlanActions(); break;
+    case 'compare': if (r) { body.innerHTML = compareHtml(r); wireComparison(); } break;
     case 'street': body.innerHTML = streetHtml(); wireStreet(); break;
     case 'log': if (r) body.innerHTML = logHtml(r); break;
   }
-  body.querySelectorAll('[data-fly]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const [lat, lng] = ((el as HTMLElement).dataset.fly ?? '0,0').split(',').map(Number);
-      map.flyTo({ lat, lng });
-    });
-  });
+  // Delegate to the stable container: polling replaces street-result buttons later.
+  body.onclick = (event) => {
+    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-fly]') : null;
+    if (!el || !body.contains(el)) return;
+    const [lat, lng] = (el.dataset.fly ?? '').split(',').map(Number);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ lat, lng });
+  };
 }
 
 /** 评分数字滚动动画（尊重系统减少动效偏好） */
@@ -121,6 +144,36 @@ function gradeColor(grade: string): string {
   return { A: '#2f9e44', B: '#74b816', C: '#f08c00', D: '#e8590c', E: '#e03131' }[grade] ?? '#666';
 }
 
+function sameRules(r: AnalysisResult): boolean {
+  return !!r.provenance && (r.provenance.applicationVersion === APPLICATION_VERSION && r.provenance.ruleVersion === RULE_VERSION &&
+    r.provenance.algorithmVersion === ALGORITHM_VERSION && r.provenance.ruleFingerprint === ruleFingerprint());
+}
+
+function dataQualityHtml(r: AnalysisResult): string {
+  const statuses = { complete: '已取完', truncated: '达到上限', partial: '部分结果', unknown: '总量未知', failed: '检索失败', skipped: '未执行' };
+  const p = r.provenance;
+  const source = p ? `<div class="rpt-sub report-source">
+    报告编号：${escapeHtml(p.reportId)}<br/>
+    版本：${escapeHtml(p.applicationVersion)} · ${escapeHtml(p.algorithmVersion)}<br/>
+    规则：${escapeHtml(p.ruleVersion)} / ${escapeHtml(p.ruleFingerprint)}<br/>
+    数据通道：${p.channels.map((c) => CHANNEL_LABEL[c]).join('、')}；坐标 BD-09；住宅小区作为人口代理。<br/>
+    设施最早采集：${p.poiCollectedAt ? new Date(p.poiCollectedAt).toLocaleString('zh-CN') : '无可用采集记录'}；
+    ${p.poiCacheHits}/${p.poiQueries} 次检索全部命中缓存。路线缓存的原始采集时间暂未记录。
+  </div>` : '<div class="rpt-sub">此报告未记录版本与采集来源，请重新体检以建立完整记录。</div>';
+  const searches = r.poiSearch ?? [];
+  const rows = searches.map((s) => `<tr>
+    <td>${escapeHtml(s.keyword)}<br/><span class="rpt-sub">${CHANNEL_LABEL[s.source]}${s.cacheHit ? ' · 缓存' : ''}</span></td>
+    <td class="num">${s.fetchedCount} / ${s.reportedTotal ?? '未知'}</td>
+    <td><span class="pill ${s.status === 'complete' ? 'ok' : 'mid'}">${statuses[s.status]}</span><br/>
+    <span class="rpt-sub">${s.pagesFetched}/${s.pageLimit} 页</span></td>
+  </tr>`).join('');
+  return `<div class="sec-title">数据完整性与来源</div>
+    ${!sameRules(r) ? '<div class="rpt-summary">此项目的算法或规则与当前版本不同，已保留历史结果。请重新体检后继续规划。</div>' : ''}
+    ${source}
+    <div class="rpt-sub">“已取完”仅表示本次关键词返回结果已取尽，不代表现实设施普查。数量为去重后已取 / 上游原始总数；达到上限时不会继续消耗配额。</div>
+    ${searches.length ? `<table class="tbl data-quality"><thead><tr><th>关键词 / 来源</th><th>已取 / 总数</th><th>检索状态</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;
+}
+
 function reportHtml(r: AnalysisResult): string {
   const g = r.score.grade;
   const dim = r.score.dims;
@@ -129,10 +182,11 @@ function reportHtml(r: AnalysisResult): string {
   const rows = r.score.details
     .map((d) => {
       const inCircle = d.category === 'residential' ? '—' : String(cumBy[d.category] ?? 0);
-      const missingTag = d.missingData ? ' <span class="pill mid">检索失败</span>' : '';
+      const missingTag = d.missingData ? ' <span class="pill mid">数据不完整</span>' : '';
+      const foundCount = r.pois.filter((p) => p.category === d.category).length;
       return `<tr>
-        <td><span class="dot" style="background:${CATEGORY_MAP[d.category].color}"></span>${d.name}${missingTag}</td>
-        <td class="num">${d.count}</td>
+        <td><span class="dot" style="background:${CATEGORY_MAP[d.category].color}"></span>${escapeHtml(d.name)}${missingTag}</td>
+        <td class="num">${foundCount}${d.missingData ? '（已取）' : ''}</td>
         <td class="num">${inCircle}</td>
         <td class="num">${d.nearestM != null ? d.nearestM + 'm' : '—'}</td>
         <td class="num">${d.missingData ? '—' : Math.round(d.completeness * 100) + '%'}</td>
@@ -144,7 +198,7 @@ function reportHtml(r: AnalysisResult): string {
     <div class="grade-circle" style="background:${gradeColor(g)}"><span>${g}</span><b>${r.score.total}</b></div>
     <div>
       <div class="rpt-title">${escapeHtml(r.centerName || '所选中心点')}</div>
-      <div class="rpt-sub">${PERSONA_MAP[r.persona].name} · 步行 ${r.minutes} 分钟 · 速度 ${PERSONA_MAP[r.persona].speed}m/min<br/>
+      <div class="rpt-sub">${PERSONA_MAP[r.persona].name} · 步行 ${r.minutes} 分钟 · 速度 ${r.field.speed}m/min<br/>
       ${new Date(r.generatedAt).toLocaleString('zh-CN')}${r.mock ? ' · <span class="mock-flag">演示数据</span>' : ''}</div>
     </div>
   </div>
@@ -153,11 +207,12 @@ function reportHtml(r: AnalysisResult): string {
     <div class="kpi"><b>${Math.round(dim.proximity * 100)}</b><span>临近度</span></div>
     <div class="kpi"><b>${r.score.coverageUnavailable ? '—' : Math.round((dim.coverage ?? 0) * 100)}</b><span>人口覆盖率${r.score.coverageUnavailable ? '（无法评估）' : ''}</span></div>
   </div>
-  ${r.cumulative ? `<div class="rpt-sub" style="margin:-6px 0 10px">累积机会（学界标准口径）：${r.minutes} 分钟步行圈可抵达设施 <b>${r.cumulative.total}</b> 处 · 覆盖 <b>${r.cumulative.categoriesCovered}</b>/10 类${r.cumulative.missingCategories.length ? ' · 圈内缺失：' + r.cumulative.missingCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c).join('、') : ''}</div>` : ''}
-  ${r.accuracy && r.accuracy.samples > 0 ? `<div class="rpt-sub" style="margin:-6px 0 10px">插值精度自证：抽样 ${r.accuracy.samples} 个真实算路点，模型估计平均绝对误差 <b>${r.accuracy.maeMinutes} 分钟（${r.accuracy.maePercent}%）</b>，最大偏差 ${r.accuracy.worstPercent}%</div>` : ''}
+  ${r.cumulative ? `<div class="rpt-sub" style="margin:-6px 0 10px">累积机会（已取样本口径）：${r.minutes} 分钟步行圈内查得设施 <b>${r.cumulative.total}</b> 处 · 覆盖 <b>${r.cumulative.categoriesCovered}</b>/10 类${r.cumulative.missingCategories.length ? ' · 样本中未查得：' + escapeHtml(r.cumulative.missingCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c).join('、')) : ''}</div>` : ''}
+  ${r.accuracy && r.accuracy.samples > 0 ? `<div class="rpt-sub" style="margin:-6px 0 10px">插值精度核验：抽样 ${r.accuracy.samples} 个算路点${r.mock ? '（当前含演示数据，仅供流程验证）' : ''}，模型估计平均绝对误差 <b>${r.accuracy.maeMinutes} 分钟（${r.accuracy.maePercent}%）</b>，最大偏差 ${r.accuracy.worstPercent}%</div>` : ''}
   ${r.warnings?.length ? `<div class="rpt-summary" style="background:var(--warn-soft)"><span class="sum-label" style="color:var(--warn)">口径与警告</span>${r.warnings.map((w) => escapeHtml(w)).join('；')}</div>` : ''}
   <div class="rpt-summary"><span class="sum-label">诊断</span>${escapeHtml(r.score.summary)}</div>
-  ${r.score.missingDataCategories?.length ? `<div class="rpt-sub" style="margin:-8px 0 10px;color:var(--warn)">※ ${r.score.missingDataCategories.join('、')}检索失败——相关数量为「数据缺失」而非真实结论，未计入评分。</div>` : ''}
+  ${r.score.missingDataCategories?.length ? `<div class="rpt-sub" style="margin:-8px 0 10px;color:var(--warn)">※ ${escapeHtml(r.score.missingDataCategories.join('、'))}检索失败或不完整，已取数量仅供参考，相关类别未计入评分。</div>` : ''}
+  ${dataQualityHtml(r)}
   <div class="sec-title">四维体检（雷达）</div>
   <div id="chart-radar" class="chart-box"></div>
   <div class="sec-title">设施完整度（柱状：实际 vs 理想）</div>
@@ -220,13 +275,13 @@ function gapsHtml(r: AnalysisResult): string {
     <div class="kpi"><b>${g.patches.length}</b><span>灰色斑块</span></div>
     <div class="kpi"><b>${g.coverageShare == null ? '—' : Math.round(g.coverageShare * 100) + '%'}</b><span>居住权重全覆盖</span></div>
   </div>
-  ${g.coverageShare == null ? '<div class="rpt-sub" style="color:var(--warn);margin-bottom:10px">片区内未检索到住宅小区（人口代理缺失），覆盖率与权重结论无法评估。</div>' : ''}
+  ${g.coverageShare == null ? '<div class="rpt-sub" style="color:var(--warn);margin-bottom:10px">住宅样本缺失或核心类别数据不完整，三件套全覆盖率无法评估。请查看报告的数据完整性记录。</div>' : ''}
   <div class="rpt-sub" style="margin-bottom:10px">
     盲区点位 = 步行时间圈内缺失任一核心设施（菜市场/药店/小学，1km 口径）的网格；
     缺 ≥2 项的连通区域聚合为灰色斑块，按住宅小区密度（人口代理）加权排序。
   </div>`;
   if (!g.patches.length) {
-    return head + '<div class="empty-tip">步行圈内核心设施覆盖良好，未发现灰色区域。</div>';
+    return head + `<div class="empty-tip">${r.incomplete ? '检索数据不完整，当前没有可确认的灰色区域；不能据此判断覆盖良好。' : '步行圈内未发现灰色区域，请结合住宅样本与数据口径查看。'}</div>`;
   }
   const rows = g.patches
     .map(
@@ -247,13 +302,14 @@ function gapsHtml(r: AnalysisResult): string {
 }
 
 function planHtml(r: AnalysisResult): string {
+  if (!sameRules(r)) return '<div class="rpt-summary">此项目的算法或规则与当前版本不同。历史结果仍可查看和导出；请重新体检后继续规划。</div>';
   const head = `
   <div class="rpt-summary">
     <span class="sum-label">工作台</span>规划引擎基于贪心最大覆盖给出补点建议。<b>采纳</b>一条建议后，
     其服务盘即刻写入覆盖状态并重新求解剩余建议；<b>跳过</b>则不再在该位置 400m 内重复推荐。
   </div>`;
   if (!r.planSites.length && !acceptedSites.length) {
-    return head + '<div class="empty-tip">当前覆盖率良好，暂无补点建议。</div>';
+    return head + `<div class="empty-tip">${r.incomplete ? '检索数据不完整，当前没有可可靠推荐的补点；请核验数据后再规划。' : '当前暂无补点建议，请结合覆盖率与住宅样本判断。'}</div>`;
   }
   const parts: string[] = [head];
   if (acceptedSites.length) {
@@ -310,6 +366,7 @@ function siteId(s: PlanSite): string {
 
 /** 依据已采纳/已跳过状态重算当前建议 */
 function currentSites(r: AnalysisResult): PlanSite[] {
+  if (!sameRules(r)) return [];
   const cov: Record<string, Uint8Array> = {};
   for (const k of Object.keys(r.gap.coveredMasks)) cov[k] = Uint8Array.from(r.gap.coveredMasks[k]);
   for (const s of acceptedSites) applySiteCoverage(cov, s.category, s.latLng, r.field);
@@ -320,7 +377,7 @@ function currentSites(r: AnalysisResult): PlanSite[] {
     PERSONA_MAP[r.persona].speed,
     {
       topK: THRESHOLDS.planTopK + rejectedSites.length,
-      unknownCategories: r.failedCategories ?? []
+      unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? []
     }
   );
   return sites.filter((s) =>
@@ -335,6 +392,7 @@ function wirePlanActions() {
       map.setPlanSites([...acceptedSites, ...currentSites(currentResult)]);
     }
     render();
+    workbenchListener?.();
   };
   body.querySelectorAll('[data-act]').forEach((el) => {
     el.addEventListener('click', () => {
@@ -358,6 +416,42 @@ function wirePlanActions() {
       }
     });
   });
+}
+
+function compareHtml(r: AnalysisResult): string {
+  const editable = sameRules(r);
+  return `<div class="rpt-summary"><span class="sum-label">方案对比</span>先在「规划建议」采纳补点，再把当前选择记录为 A 或 B。两套方案共用本次体检基线，记录后可继续调整；跳过的点不计入收益。</div>
+    <p class="rpt-sub">${escapeHtml(r.centerName)} · ${PERSONA_MAP[r.persona].name} · ${r.minutes} 分钟<br>当前已采纳 ${acceptedSites.length} 处，已跳过 ${rejectedSites.length} 处。</p>
+    ${!editable ? '<p class="rpt-summary">此项目使用历史规则，方案只可查看。请重新体检后继续规划。</p>' : ''}
+    <div class="comparison-actions">${(['A', 'B'] as const).map(k => `<div class="plan-card"><b>方案 ${k}</b><p class="rpt-sub">${scenarios[k] ? `已记录 ${scenarios[k]!.acceptedSites.length} 处补点<br>${escapeHtml(new Date(scenarios[k]!.savedAt).toLocaleString('zh-CN'))}` : '尚未记录'}</p>
+      <button class="btn ghost" data-scenario-save="${k}" ${editable ? '' : 'disabled'}>${scenarios[k] ? '更新' : '记录'}为 ${k}</button>
+      <button class="btn ghost" data-scenario-load="${k}" ${editable && scenarios[k] ? '' : 'disabled'}>载入 ${k}</button></div>`).join('')}</div>
+    <div class="comparison-tools"><button class="btn ghost" id="compare-plan">去调整补点</button><button class="btn ghost" id="compare-reset" ${editable ? '' : 'disabled'}>清空当前选择</button></div>
+    <p class="rpt-sub">清空或载入只改变当前工作台，已记录的 A / B 保留；覆盖记录前会提醒确认。</p>
+    ${comparisonTable(r, scenarios)}
+    <div class="rpt-sub">全覆盖：菜市场、药店、小学三类服务齐全的住宅代理权重占比。新增覆盖相对现状计算，重叠服务范围去重。剩余薄弱住宅格只统计有住宅权重的格点。${THRESHOLDS.coreRadiusM} 米直线半径模拟，非真实人口数；现状总分不随补点重算。数据不完整时不提供改善结论。</div>`;
+}
+function wireComparison() {
+  const refresh = () => { if (currentResult && map.ready) map.setPlanSites(displayedPlanSites()); render(); workbenchListener?.(); };
+  document.getElementById('compare-plan')?.addEventListener('click', () => switchTab('plan'));
+  document.getElementById('compare-reset')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    if ((acceptedSites.length || rejectedSites.length) && !window.confirm('清空当前工作台的采纳和跳过选择？已记录的 A / B 会保留。')) return;
+    acceptedSites = []; rejectedSites = []; refresh();
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-scenario-save]').forEach(button => button.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const slot = button.dataset.scenarioSave as 'A' | 'B';
+    if (scenarios[slot] && !window.confirm(`用当前选择覆盖已记录的方案 ${slot}？`)) return;
+    scenarios[slot] = captureScenario(currentResult, { acceptedSites, rejectedSites }); refresh();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-scenario-load]').forEach(button => button.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const saved = scenarios[button.dataset.scenarioLoad as 'A' | 'B'];
+    if (!saved || saved.baselineKey !== comparisonBaseline(currentResult)) { banner('方案基线不同，无法载入。', 'warn'); return; }
+    if ((acceptedSites.length || rejectedSites.length) && !window.confirm('载入此方案将替换当前工作台选择；尚未记录的调整将丢失。是否继续？')) return;
+    acceptedSites = structuredClone(saved.acceptedSites); rejectedSites = structuredClone(saved.rejectedSites); refresh();
+  }));
 }
 
 function logHtml(r: AnalysisResult): string {
@@ -555,7 +649,12 @@ function updateStreetStatus() {
     <td class="num">${g.weakCount || '—'}</td>
     <td class="num">${g.bestScore}　</td><td class="num">${g.worstScore}</td></tr>`).join('')}</tbody></table>` : ''}
   ${communityTable(s.communities.filter((c: any) => c.score >= 0))}
+  <button id="btn-weak-csv" class="btn ghost">导出薄弱社区 CSV</button>
   <div class="rpt-sub">说明：排名为<b>片区抽样口径</b>（采样半径内住宅小区），非行政街道全域普查；小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
+  document.getElementById('btn-weak-csv')?.addEventListener('click', () => {
+    try { if (streetJobId) downloadText(weakCommunityCsv(s.communities, streetJobId), '圈点-薄弱社区.csv', 'text/csv;charset=utf-8'); }
+    catch { banner('薄弱社区表导出失败，任务结果已保留，请重试。', 'warn'); }
+  });
 }
 
 function communityTable(communities: (StreetCommunity & { coverageUnavailable?: boolean })[]): string {
