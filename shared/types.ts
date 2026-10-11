@@ -63,6 +63,37 @@ export interface PersonaDef {
 
 export type ChannelName = 'server' | 'client' | 'mock';
 
+/** complete 仅表示该关键词的上游返回已取尽，不代表现实设施普查。 */
+export type PoiSearchStatus = 'complete' | 'truncated' | 'partial' | 'unknown' | 'failed' | 'skipped';
+
+export interface PoiSearchCompleteness {
+  keyword: string;
+  category: CategoryId;
+  status: PoiSearchStatus;
+  /** 上游声明的总条目数；未提供或无效时为 null，不能推定为全量。 */
+  reportedTotal: number | null;
+  /** 已收到的原始条目数（去重前）。 */
+  rawCount: number;
+  /** 有效、去重后的 POI 数量。 */
+  fetchedCount: number;
+  pagesFetched: number;
+  pageSize: number;
+  pageLimit: number;
+  quotaExhausted: boolean;
+  collectedAt: string;
+  /** 只有全部成功页均来自缓存时才为 true。 */
+  cacheHit: boolean;
+  source: ChannelName;
+  reason?: string;
+  /** 兼容未实现详细检索契约的旧 provider：仅供估算，不声称完整。 */
+  legacy?: boolean;
+}
+
+export interface PoiSearchResult {
+  pois: Poi[];
+  completeness: PoiSearchCompleteness;
+}
+
 /** 单向探测结果汇总后的等时圈解析模型 */
 export interface IsochroneModel {
   center: LatLng;
@@ -213,6 +244,7 @@ export interface AnalysisResult {
   persona: PersonaId;
   minutes: number;
   generatedAt: string;
+  provenance?: import('./provenance.js').AnalysisProvenance;
   model: IsochroneModel;
   field: TimeField;
   rings: { level: number; lines: LatLng[][] }[];
@@ -225,6 +257,12 @@ export interface AnalysisResult {
   warnings?: string[];
   /** 检索失败的类别（数量 0 属数据缺失而非真实结论） */
   failedCategories?: CategoryId[];
+  /** 每关键词的取样范围、分页与完整性状态。 */
+  poiSearch?: PoiSearchCompleteness[];
+  /** 无法确认完整的类别（含未执行/失败）；查得数量仅是下界。 */
+  incompleteCategories?: CategoryId[];
+  /** 当前数据不足以作缺失/覆盖结论的类别。 */
+  assessmentUnavailableCategories?: CategoryId[];
   /** true = 设施检索全部失败，报告为不完整结果 */
   incomplete?: boolean;
   /** true = 检索因上游配额耗尽被截断（incomplete 必为 true） */

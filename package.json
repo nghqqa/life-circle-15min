@@ -17,6 +17,7 @@
     "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=cjs --outfile=dist-server/index.cjs --log-level=warning",
     "start": "node --env-file-if-exists=.env dist-server/index.cjs",
     "test": "vitest run",
+    "test:browser": "playwright test",
     "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "docker:build": "docker build -t life-circle-15min .",
     "docker:run": "docker run --rm -p 8787:8787 --env-file .env life-circle-15min"
@@ -26,6 +27,7 @@
     "express": "^4.21.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",

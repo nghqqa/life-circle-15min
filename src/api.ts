@@ -3,7 +3,10 @@ import { THRESHOLDS, DEFAULT_CENTER } from '../shared/config.js';
 import { destination } from '../shared/geo.js';
 import { sampleBearings } from '../shared/isochrone.js';
 import { poiCacheKey, getCachedPois, setCachedPois } from './poiCache.js';
-import type { ChannelName, LatLng, Poi, PoiSource, RouteProbe } from '../shared/types.js';
+import { getCachedSearch, setCachedSearch, detailedSearchKey } from './poiCache.js';
+import { searchPoiPages, legacyPoiSearchResult, unqueriedPoiSearch, isPoiQuotaError } from '../shared/poiSearch.js';
+import type { PoiSearchPage } from '../shared/poiSearch.js';
+import type { CategoryId, ChannelName, LatLng, Poi, PoiSource, RouteProbe, PoiSearchResult } from '../shared/types.js';
 
 /**
  * 数据通道设计（对应评分细则「容错与降级机制」）：
@@ -34,6 +37,7 @@ export interface Gateway {
   /** 逆地理编码：坐标 → 地名描述 */
   reverseGeocode(p: LatLng): Promise<string>;
   searchPoi(params: PoiSearchParams): Promise<Poi[]>;
+  searchPoiDetailed?(params: PoiSearchParams, category: CategoryId): Promise<PoiSearchResult>;
   routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]>;
   walkingRoute(origin: LatLng, dest: LatLng): Promise<RouteProbe | null>;
   /** 返回一条步行路线的分段描述文本（用于过街设施文本扫描） */
@@ -101,6 +105,25 @@ export class ServerGateway implements Gateway {
     });
     if (r.status !== 0) throw new Error(r.message ?? `place status ${r.status}`);
     return (r.results ?? []).map((it: any) => this.mapPoi(it, params.query));
+  }
+
+  searchPoiDetailed(params: PoiSearchParams, category: CategoryId): Promise<PoiSearchResult> {
+    return searchPoiPages({ keyword: params.query, category, source: this.name, fetchPage: async (page) => {
+      if (page > 0) await new Promise((resolve) => setTimeout(resolve, 450));
+      const query = new URLSearchParams({ query: params.query,
+        location: `${params.location.lat},${params.location.lng}`,
+        radius: String(params.radiusM), page_num: String(page) });
+      const response = await fetch(`/api/baidu/place/v2/search?${query}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (data.status !== 0) throw new Error(`place status ${data.status}`);
+      if (!Array.isArray(data.results)) throw new Error('设施检索响应缺少结果列表');
+      const rows = data.results;
+      return { pois: rows.map((it: any) => ({ ...this.mapPoi(it, params.query), category })),
+        rawCount: rows.length, reportedTotal: data.total,
+        collectedAt: response.headers.get('X-Data-Collected-At') ?? undefined,
+        cacheHit: response.headers.get('X-Proxy-Cache') === 'HIT', source: this.name };
+    } });
   }
 
   async routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]> {
@@ -222,6 +245,67 @@ export class ClientGateway implements Gateway {
       return await this.glSearchPoi(params);
     }
     return await this.jsonpSearchPoi(params);
+  }
+
+  searchPoiDetailed(params: PoiSearchParams, category: CategoryId): Promise<PoiSearchResult> {
+    const sdkPage = window.BMapGL && window.__LC_MAP__ ? this.glPageFetcher(params, category) : null;
+    return searchPoiPages({ keyword: params.query, category, source: this.name, fetchPage: async (page) => {
+      if (page > 0) await new Promise((resolve) => setTimeout(resolve, 450));
+      if (sdkPage) return sdkPage(page);
+      const data = await this.jsonp('https://api.map.baidu.com/place/v2/search', {
+        query: params.query, location: `${params.location.lat},${params.location.lng}`,
+        radius: String(params.radiusM), radius_limit: 'true', scope: '2', page_size: '20', page_num: String(page)
+      });
+      if (data.status !== 0) throw new Error(`place status ${data.status}`);
+      if (!Array.isArray(data.results)) throw new Error('设施检索响应缺少结果列表');
+      const rows = data.results;
+      return { pois: rows.map((it: any) => ({ uid: String(it.uid ?? `${it.name}-${it.address ?? ''}`),
+        name: String(it.name ?? ''), lat: it.location?.lat ?? NaN, lng: it.location?.lng ?? NaN,
+        category, address: it.address, source: this.name })),
+        rawCount: rows.length, reportedTotal: data.total, source: this.name };
+    } });
+  }
+
+  /** Reuse a single search instance so later pages do not re-request page zero. */
+  private glPageFetcher(params: PoiSearchParams, category: CategoryId): (page: number) => Promise<PoiSearchPage> {
+    let search: any;
+    let complete: ((result: any) => void) | null = null;
+    return (page) => new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => { settled = true; complete = null; reject(new Error('gl search timeout')); }, 8000);
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true; complete = null; clearTimeout(timer); reject(error);
+      };
+      complete = (result: any) => {
+        if (settled) return;
+        try {
+          const status = search.getStatus();
+          if (status !== 0) throw new Error(`gl search status ${status}`);
+          if (!result || typeof result.getCurrentNumPois !== 'function') throw new Error('gl search invalid result');
+          if (typeof result.getPageIndex === 'function' && result.getPageIndex() !== page) return;
+          const count = result.getCurrentNumPois();
+          if (!Number.isInteger(count) || count < 0 || count > 20) throw new Error('gl search invalid count');
+          const pois: Poi[] = [];
+          for (let i = 0; i < count; i++) {
+            const p = result.getPoi(i);
+            if (!p?.point) continue;
+            pois.push({ uid: String(p.uid ?? `${p.title}-${p.address ?? ''}`), name: String(p.title ?? ''),
+              lat: p.point.lat, lng: p.point.lng, category, address: p.address, source: 'client' });
+          }
+          settled = true; complete = null; clearTimeout(timer);
+          resolve({ pois, rawCount: count, reportedTotal: result.getNumPois?.(), source: 'client' });
+        } catch (error) { fail(error); }
+      };
+      try {
+        if (!search) {
+          search = new window.BMapGL.LocalSearch(window.__LC_MAP__, {
+            pageCapacity: 20, onSearchComplete: (result: any) => complete?.(result)
+          });
+          search.searchNearby(params.query, new window.BMapGL.Point(params.location.lng, params.location.lat), params.radiusM);
+        } else search.gotoPage(page);
+      } catch (error) { fail(error); }
+    });
   }
 
   /** 浏览器通道没有批量算路接口：降级为 GL SDK 逐向算路（调用方限制方向数） */
@@ -449,6 +533,14 @@ export class MockGateway implements Gateway {
     );
   }
 
+  async searchPoiDetailed(params: PoiSearchParams, category: CategoryId): Promise<PoiSearchResult> {
+    const pois = (await this.searchPoi(params)).map((p) => ({ ...p, category }));
+    const result = legacyPoiSearchResult(params.query, category, pois);
+    result.completeness = { ...result.completeness, status: 'complete', reportedTotal: pois.length,
+      source: 'mock', legacy: false, reason: '合成演示数据，完整性仅指本次合成样本' };
+    return result;
+  }
+
   async routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]> {
     const { minutes, speed } = window.__LC_MOCK_CTX__ ?? { minutes: 15, speed: 80 };
     const probeM = minutes * speed;
@@ -636,6 +728,39 @@ export class GatewayChain {
       if (g.name !== 'mock' && pois.length > 0) setCachedPois(key, { channel: g.name, at: Date.now(), pois });
       return pois;
     }, `poi:${params.query}`);
+  }
+
+  /** Keep one source per query; return quota status so the analysis stops the remaining batch. */
+  async searchPoiDetailed(params: PoiSearchParams, category: CategoryId): Promise<ChainResult<PoiSearchResult>> {
+    const key = detailedSearchKey(params.query, params.location, params.radiusM, category, this.gateways.map((g) => g.name));
+    const cached = getCachedSearch(key);
+    if (cached) return { value: cached, channel: cached.completeness.source, ms: 0,
+      degraded: cached.completeness.source !== this.gateways[0].name };
+    const start = performance.now();
+    let last: PoiSearchResult | null = null;
+    for (const gateway of this.gateways) {
+      const circuit = this.circuits.get(gateway.name)!;
+      if (circuit.isOpen()) continue;
+      let result: PoiSearchResult;
+      try {
+        result = gateway.searchPoiDetailed
+          ? await gateway.searchPoiDetailed(params, category)
+          : legacyPoiSearchResult(params.query, category, await gateway.searchPoi(params));
+      } catch (error) {
+        result = { pois: [], completeness: unqueriedPoiSearch(params.query, category, gateway.name, 'failed', isPoiQuotaError(error)) };
+      }
+      last = result;
+      const meta = result.completeness;
+      if (meta.quotaExhausted || meta.status === 'failed') circuit.recordFailure(meta.quotaExhausted);
+      else circuit.recordSuccess();
+      if (meta.status === 'failed' && !meta.quotaExhausted) continue;
+      this.active = gateway.name;
+      this.onChannelChange?.(gateway.name);
+      if (gateway.name !== 'mock' && meta.status === 'complete') setCachedSearch(key, result);
+      return { value: result, channel: gateway.name, ms: Math.round(performance.now() - start), degraded: gateway.name !== this.gateways[0].name };
+    }
+    if (last) return { value: last, channel: last.completeness.source, ms: Math.round(performance.now() - start), degraded: true };
+    throw new Error('所有数据通道暂不可用');
   }
 
   /** 批量算路：超过 batch 上限自动分片；单方向失败记为 null（由模型合成兜底） */

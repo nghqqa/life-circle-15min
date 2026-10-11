@@ -1,7 +1,8 @@
 import { CATEGORIES } from '../../shared/config.js';
 import type { AnalysisProvider, AnalyzeParams, AnalysisReport } from '../../shared/analyze.js';
 import { runAnalysis } from '../../shared/analyze.js';
-import type { CategoryId, LatLng, Poi, RouteProbe } from '../../shared/types.js';
+import type { CategoryId, LatLng, Poi, PoiSearchResult, RouteProbe } from '../../shared/types.js';
+import { isPoiQuotaError, searchPoiPages, type PoiSearchPage } from '../../shared/poiSearch.js';
 import { TtlCache } from './cache.js';
 import { buckets, callBaidu } from './baidu.js';
 
@@ -42,6 +43,7 @@ function guessCategory(query: string): CategoryId {
 }
 
 export class BaiduServerProvider implements AnalysisProvider {
+  private quotaError: Error | null = null;
   constructor(
     private ak: string,
     /** 上游调用计数回调（批量任务用于真实请求预算） */
@@ -52,17 +54,30 @@ export class BaiduServerProvider implements AnalysisProvider {
     this.onUpstreamCall?.();
   }
 
+  /** 一次请求计一次预算；任何配额响应会锁止本次分析的后续上游请求。 */
+  private async call(path: string, params: Record<string, string>, bucket: Parameters<typeof callBaidu>[2]) {
+    if (this.quotaError) throw this.quotaError;
+    this.count();
+    // 重试在各方法显式执行，避免底层隐式重试绕过请求计数。
+    const response = await callBaidu(path, params, bucket, this.ak, 0);
+    if (isPoiQuotaError({ status: response.body?.status, httpStatus: response.httpStatus,
+      message: response.body?.message ?? response.body?.msg })) {
+      this.quotaError = new Error(`上游配额或限流：status ${response.body?.status ?? response.httpStatus}`);
+      throw this.quotaError;
+    }
+    return response;
+  }
+
   async geocode(address: string): Promise<LatLng> {
     const key = `geo:${address}`;
     const loc = await withCache(geoCache, key, async () => {
       // 街道级地址偶发「无相关结果」：带城市前缀提示提升准确性，失败重试一次
       const cityHint = (address.match(/^(.*?市)/)?.[1] ?? '').trim();
       const once = () =>
-        callBaidu(
+        this.call(
           '/geocoding/v3/',
           cityHint ? { address, city: cityHint } : { address },
-          buckets.geo,
-          this.ak
+          buckets.geo
         );
       let r = await once().catch(() => once());
       if (!r.ok || r.body?.status !== 0) r = await once().catch(() => r);
@@ -75,12 +90,10 @@ export class BaiduServerProvider implements AnalysisProvider {
   async reverseGeocode(p: LatLng): Promise<string> {
     const key = `rev:${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
     return withCache(geoCache, key, async () => {
-      this.count();
-      const r = await callBaidu(
+      const r = await this.call(
         '/reverse_geocoding/v3/',
         { location: `${p.lat},${p.lng}` },
-        buckets.geo,
-        this.ak
+        buckets.geo
       );
       const name = r.body?.result?.formatted_address;
       if (!r.ok || r.body?.status !== 0 || !name) throw new Error('reverse failed');
@@ -89,26 +102,44 @@ export class BaiduServerProvider implements AnalysisProvider {
   }
 
   async searchPoi(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<Poi[]> {
+    const result = await this.searchPoiDetailed(keyword, category, center, radiusM);
+    if (result.completeness.status === 'failed') {
+      throw new Error(result.completeness.quotaExhausted ? '上游配额耗尽，检索停止' : '设施检索失败');
+    }
+    return result.pois;
+  }
+
+  async searchPoiDetailed(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<PoiSearchResult> {
+    return searchPoiPages({
+      keyword, category, source: 'server',
+      fetchPage: (page, pageSize) => this.searchPoiPage(keyword, category, center, radiusM, page, pageSize)
+    });
+  }
+
+  private async searchPoiPage(
+    keyword: string, category: CategoryId, center: LatLng, radiusM: number, page: number, pageSize: number
+  ): Promise<PoiSearchPage> {
     const params = {
       query: keyword,
       location: `${center.lat},${center.lng}`,
       radius: String(Math.min(3000, Math.max(100, radiusM))),
       radius_limit: 'true',
       scope: '2',
-      page_size: '20',
-      page_num: '0'
+      page_size: String(pageSize),
+      page_num: String(page)
     };
-    const key = `place:${JSON.stringify(params)}`;
-    return withCache(placeCache, key, async () => {
+    const key = `place:v2:${category}:${JSON.stringify(params)}`;
+    const cached = placeCache.get(key);
+    if (cached !== undefined) return { ...cached, cacheHit: true };
+    const data: PoiSearchPage = await withCache(placeCache, key, async () => {
       // 上游偶发 status=1（Internal Service Error）为瞬态错误：重试两次，配额类错误不重试
-      this.count();
-      let r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
+      let r = await this.call('/place/v2/search', params, buckets.place);
       for (let retry = 0; retry < 2 && this.isTransient(r); retry++) {
         await new Promise((res) => setTimeout(res, 400 * (retry + 1)));
-        this.count();
-        r = await callBaidu('/place/v2/search', params, buckets.place, this.ak);
+        r = await this.call('/place/v2/search', params, buckets.place);
       }
       if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `place ${r.body?.status}`);
+      if (!Array.isArray(r.body.results)) throw new Error('设施检索响应缺少结果列表');
       const cat = category ?? guessCategory(keyword);
       const pois: Poi[] = (r.body.results ?? [])
         .filter((it: any) => it.location)
@@ -121,8 +152,12 @@ export class BaiduServerProvider implements AnalysisProvider {
           address: it.address,
           source: 'server' as const
         }));
-      return pois;
+      return {
+        pois, reportedTotal: typeof r.body.total === 'number' ? r.body.total : null,
+        rawCount: r.body.results.length, collectedAt: new Date().toISOString(), source: 'server' as const
+      };
     });
+    return { ...data, cacheHit: false };
   }
 
   async routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]> {
@@ -133,22 +168,18 @@ export class BaiduServerProvider implements AnalysisProvider {
       const destStr = slice.map((d) => `${d.lat},${d.lng}`).join('|');
       const key = `rt:${origin.lat},${origin.lng}:${destStr}`;
       const probes = await withCache(routeCache, key, async () => {
-        this.count();
-      let r = await callBaidu(
+        let r = await this.call(
           '/routematrix/v2/walking',
           { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
-          buckets.route,
-          this.ak
+          buckets.route
         );
         if (!r.ok || r.body?.status !== 0) {
           if (this.isTransient(r)) {
             await new Promise((res) => setTimeout(res, 500));
-            this.count();
-            r = await callBaidu(
+            r = await this.call(
               '/routematrix/v2/walking',
               { origins: `${origin.lat},${origin.lng}`, destinations: destStr },
-              buckets.route,
-              this.ak
+              buckets.route
             );
           }
         }
