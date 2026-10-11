@@ -432,7 +432,7 @@ function iconCenter(): any {
   </svg>`;
   return new BMapGL.Icon(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, new BMapGL.Size(size, size), {
     anchor: new BMapGL.Size(size / 2, size / 2),
-    imageSize: new BMapGL.Size(size * 2, size * 2)
+    imageSize: new BMapGL.Size(size, size)
   });
 }
 
@@ -443,7 +443,7 @@ function iconFor(color: string, glyph: string, size = 26): any {
   </svg>`;
   const icon = new BMapGL.Icon(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, new BMapGL.Size(size, size), {
     anchor: new BMapGL.Size(size / 2, size / 2),
-    imageSize: new BMapGL.Size(size * 2, size * 2)
+    imageSize: new BMapGL.Size(size, size)
   });
   return icon;
 }
