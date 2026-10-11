@@ -36,6 +36,7 @@ import { createProvenance } from '../shared/provenance.js';
 import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch, isPoiQuotaError } from '../shared/poiSearch.js';
 import type { PoiSearchCompleteness } from '../shared/types.js';
 import type { ProjectSnapshot } from './projects.js';
+import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
 
 // ---------- 全局状态 ----------
 
@@ -230,7 +231,17 @@ function bindUi() {
     b.addEventListener('click', () => switchTab((b as HTMLElement).dataset.tab!));
   });
 
-  $('btn-print').addEventListener('click', () => window.print());
+  $('btn-print').addEventListener('click', () => {
+    if (!state.result) return;
+    try {
+      if (openPrintableReport(state.result, getWorkbenchSnapshot()) === 'download') banner('预览窗口被浏览器阻止，已改为下载 HTML 报告；打开文件后可打印或另存 PDF。', 'warn');
+    } catch { banner('报告生成失败，当前项目已保留；请下载项目快照备份后重试。', 'warn'); }
+  });
+  $('btn-facility-csv').addEventListener('click', () => {
+    if (!state.result) return;
+    try { downloadText(facilityCsv(state.result), '圈点-设施清单.csv', 'text/csv;charset=utf-8'); }
+    catch { banner('设施表导出失败，当前数据未改动，请重试或下载项目快照。', 'warn'); }
+  });
   $('btn-json').addEventListener('click', exportJson);
 }
 

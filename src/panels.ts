@@ -7,6 +7,8 @@ import { banner, CHANNEL_LABEL } from './hud.js';
 import { map } from './main.js';
 import type { WorkbenchSnapshot } from './projects.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
+import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
+import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
 
@@ -16,15 +18,17 @@ let currentTab = 'report';
 // ---- 交互式规划工作台状态（新分析时重置）----
 let acceptedSites: PlanSite[] = [];
 let rejectedSites: PlanSite[] = [];
+let scenarios: PlanScenarios = {};
 let workbenchListener: (() => void) | null = null;
 
 export function onWorkbenchChange(listener: () => void) { workbenchListener = listener; }
 export function getWorkbenchSnapshot(): WorkbenchSnapshot {
-  return structuredClone({ acceptedSites, rejectedSites });
+  return structuredClone({ acceptedSites, rejectedSites, ...(Object.keys(scenarios).length ? { scenarios } : {}) });
 }
 export function setWorkbenchState(snapshot: WorkbenchSnapshot) {
   acceptedSites = structuredClone(snapshot.acceptedSites);
   rejectedSites = structuredClone(snapshot.rejectedSites);
+  scenarios = structuredClone(snapshot.scenarios ?? {});
 }
 export function displayedPlanSites(): PlanSite[] {
   return currentResult ? [...acceptedSites, ...currentSites(currentResult)] : [];
@@ -49,6 +53,7 @@ export function setResult(r: AnalysisResult | null) {
   if (r !== currentResult) {
     acceptedSites = [];
     rejectedSites = [];
+    scenarios = {};
   }
   currentResult = r;
 }
@@ -64,7 +69,8 @@ export function getWorkbenchState() {
       afterPct: s.afterPct
     })),
     rejectedSites: rejectedSites.map((s) => ({ category: s.category, latLng: s.latLng })),
-    currentSuggestions: currentResult ? currentSites(currentResult).length : 0
+    currentSuggestions: currentResult ? currentSites(currentResult).length : 0,
+    ...(Object.keys(scenarios).length ? { scenarios: structuredClone(scenarios) } : {})
   };
 }
 
@@ -92,7 +98,7 @@ export function render() {
     footer.classList.add('hidden');
     return;
   }
-  footer.classList.toggle('hidden', currentTab !== 'report' || !currentResult);
+  footer.classList.toggle('hidden', !['report', 'compare'].includes(currentTab) || !currentResult);
   const r = currentResult;
   switch (currentTab) {
     case 'report':
@@ -102,6 +108,7 @@ export function render() {
     case 'checklist': if (r) body.innerHTML = checklistHtml(r); break;
     case 'gaps': if (r) body.innerHTML = gapsHtml(r); break;
     case 'plan': body.innerHTML = r ? planHtml(r) : '<div class="empty-tip">先完成一次体检</div>'; wirePlanActions(); break;
+    case 'compare': if (r) { body.innerHTML = compareHtml(r); wireComparison(); } break;
     case 'street': body.innerHTML = streetHtml(); wireStreet(); break;
     case 'log': if (r) body.innerHTML = logHtml(r); break;
   }
@@ -410,6 +417,42 @@ function wirePlanActions() {
   });
 }
 
+function compareHtml(r: AnalysisResult): string {
+  const editable = sameRules(r);
+  return `<div class="rpt-summary"><span class="sum-label">方案对比</span>先在「规划建议」采纳补点，再把当前选择记录为 A 或 B。两套方案共用本次体检基线，记录后可继续调整；跳过的点不计入收益。</div>
+    <p class="rpt-sub">${escapeHtml(r.centerName)} · ${PERSONA_MAP[r.persona].name} · ${r.minutes} 分钟<br>当前已采纳 ${acceptedSites.length} 处，已跳过 ${rejectedSites.length} 处。</p>
+    ${!editable ? '<p class="rpt-summary">此项目使用历史规则，方案只可查看。请重新体检后继续规划。</p>' : ''}
+    <div class="comparison-actions">${(['A', 'B'] as const).map(k => `<div class="plan-card"><b>方案 ${k}</b><p class="rpt-sub">${scenarios[k] ? `已记录 ${scenarios[k]!.acceptedSites.length} 处补点<br>${escapeHtml(new Date(scenarios[k]!.savedAt).toLocaleString('zh-CN'))}` : '尚未记录'}</p>
+      <button class="btn ghost" data-scenario-save="${k}" ${editable ? '' : 'disabled'}>${scenarios[k] ? '更新' : '记录'}为 ${k}</button>
+      <button class="btn ghost" data-scenario-load="${k}" ${editable && scenarios[k] ? '' : 'disabled'}>载入 ${k}</button></div>`).join('')}</div>
+    <div class="comparison-tools"><button class="btn ghost" id="compare-plan">去调整补点</button><button class="btn ghost" id="compare-reset" ${editable ? '' : 'disabled'}>清空当前选择</button></div>
+    <p class="rpt-sub">清空或载入只改变当前工作台，已记录的 A / B 保留；覆盖记录前会提醒确认。</p>
+    ${comparisonTable(r, scenarios)}
+    <div class="rpt-sub">全覆盖：菜市场、药店、小学三类服务齐全的住宅代理权重占比。新增覆盖相对现状计算，重叠服务范围去重。剩余薄弱住宅格只统计有住宅权重的格点。${THRESHOLDS.coreRadiusM} 米直线半径模拟，非真实人口数；现状总分不随补点重算。数据不完整时不提供改善结论。</div>`;
+}
+function wireComparison() {
+  const refresh = () => { if (currentResult && map.ready) map.setPlanSites(displayedPlanSites()); render(); workbenchListener?.(); };
+  document.getElementById('compare-plan')?.addEventListener('click', () => switchTab('plan'));
+  document.getElementById('compare-reset')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    if ((acceptedSites.length || rejectedSites.length) && !window.confirm('清空当前工作台的采纳和跳过选择？已记录的 A / B 会保留。')) return;
+    acceptedSites = []; rejectedSites = []; refresh();
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-scenario-save]').forEach(button => button.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const slot = button.dataset.scenarioSave as 'A' | 'B';
+    if (scenarios[slot] && !window.confirm(`用当前选择覆盖已记录的方案 ${slot}？`)) return;
+    scenarios[slot] = captureScenario(currentResult, { acceptedSites, rejectedSites }); refresh();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-scenario-load]').forEach(button => button.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const saved = scenarios[button.dataset.scenarioLoad as 'A' | 'B'];
+    if (!saved || saved.baselineKey !== comparisonBaseline(currentResult)) { banner('方案基线不同，无法载入。', 'warn'); return; }
+    if ((acceptedSites.length || rejectedSites.length) && !window.confirm('载入此方案将替换当前工作台选择；尚未记录的调整将丢失。是否继续？')) return;
+    acceptedSites = structuredClone(saved.acceptedSites); rejectedSites = structuredClone(saved.rejectedSites); refresh();
+  }));
+}
+
 function logHtml(r: AnalysisResult): string {
   const lines = r.steps
     .map(
@@ -605,7 +648,12 @@ function updateStreetStatus() {
     <td class="num">${g.weakCount || '—'}</td>
     <td class="num">${g.bestScore}　</td><td class="num">${g.worstScore}</td></tr>`).join('')}</tbody></table>` : ''}
   ${communityTable(s.communities.filter((c: any) => c.score >= 0))}
+  <button id="btn-weak-csv" class="btn ghost">导出薄弱社区 CSV</button>
   <div class="rpt-sub">说明：排名为<b>片区抽样口径</b>（采样半径内住宅小区），非行政街道全域普查；小区评分未覆盖时显示「-」；重复发起任务会命中服务端缓存，速度快得多。</div>`;
+  document.getElementById('btn-weak-csv')?.addEventListener('click', () => {
+    try { if (streetJobId) downloadText(weakCommunityCsv(s.communities, streetJobId), '圈点-薄弱社区.csv', 'text/csv;charset=utf-8'); }
+    catch { banner('薄弱社区表导出失败，任务结果已保留，请重试。', 'warn'); }
+  });
 }
 
 function communityTable(communities: (StreetCommunity & { coverageUnavailable?: boolean })[]): string {

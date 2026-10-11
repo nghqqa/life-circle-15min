@@ -1,8 +1,9 @@
 import type { AnalysisResult, CategoryId, LatLng, PlanSite } from '../shared/types.js';
 import { PERSONA_MAP } from '../shared/config.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
+import { comparisonBaseline, type PlanScenarios, type PlanScenario } from '../shared/comparison.js';
 
-export interface WorkbenchSnapshot { acceptedSites: PlanSite[]; rejectedSites: PlanSite[] }
+export interface WorkbenchSnapshot { acceptedSites: PlanSite[]; rejectedSites: PlanSite[]; scenarios?: PlanScenarios }
 export interface ProjectSnapshot {
   format: 'life-circle-project'; schemaVersion: 1;
   id: string; name: string; createdAt: string; updatedAt: string;
@@ -151,7 +152,23 @@ function snapshot(v: unknown): ProjectSnapshot {
   const id = str(o.id, 'id', 100); if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) bad('id');
   const name = str(o.name, 'name', 100).trim(); if (!name) bad('name');
   const w = obj(o.workbench, 'workbench');
-  return { format: 'life-circle-project', schemaVersion: 1, id, name, createdAt: timestamp(o.createdAt, 'createdAt'), updatedAt: timestamp(o.updatedAt, 'updatedAt'), result: result(o.result), workbench: { acceptedSites: arr(w.acceptedSites, 'workbench.acceptedSites', site, 100), rejectedSites: arr(w.rejectedSites, 'workbench.rejectedSites', site, 100) } };
+  const analysis = result(o.result);
+  const workbench: WorkbenchSnapshot = { acceptedSites: arr(w.acceptedSites, 'workbench.acceptedSites', site, 100), rejectedSites: arr(w.rejectedSites, 'workbench.rejectedSites', site, 100) };
+  if (w.scenarios !== undefined) {
+    const saved = obj(w.scenarios, 'workbench.scenarios');
+    if (Object.keys(saved).some(k => k !== 'A' && k !== 'B')) bad('方案只支持 A / B');
+    workbench.scenarios = {};
+    const baseline = comparisonBaseline(analysis);
+    for (const key of ['A', 'B'] as const) {
+      if (saved[key] === undefined) continue;
+      const s = obj(saved[key], `scenarios.${key}`);
+      const scenario: PlanScenario = { baselineKey: str(s.baselineKey, 'scenario.baselineKey', 100), savedAt: timestamp(s.savedAt, 'scenario.savedAt'),
+        acceptedSites: arr(s.acceptedSites, 'scenario.acceptedSites', site, 100), rejectedSites: arr(s.rejectedSites, 'scenario.rejectedSites', site, 100) };
+      if (scenario.baselineKey !== baseline) bad(`方案 ${key} 的社区、数据或规则与项目基线不一致`);
+      workbench.scenarios[key] = scenario;
+    }
+  }
+  return { format: 'life-circle-project', schemaVersion: 1, id, name, createdAt: timestamp(o.createdAt, 'createdAt'), updatedAt: timestamp(o.updatedAt, 'updatedAt'), result: analysis, workbench };
 }
 function json(text: string, max = MAX_PROJECT_BYTES): unknown {
   if (typeof text !== 'string' || text.length > max || new TextEncoder().encode(text).byteLength > max) throw new ProjectError('too_large', '项目文件过大，请导入不超过 8 MB 的完整项目。');
