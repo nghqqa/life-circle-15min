@@ -4,6 +4,7 @@ import { runAnalysis } from '../../shared/analyze.js';
 import type { CategoryId, LatLng, Poi, PoiSearchResult, RouteProbe } from '../../shared/types.js';
 import { isPoiQuotaError, searchPoiPages, type PoiSearchPage } from '../../shared/poiSearch.js';
 import { TtlCache } from './cache.js';
+import { countCacheHit, overBudget } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
 
 /**
@@ -20,7 +21,10 @@ const inflight = new Map<string, Promise<any>>();
 /** 缓存 + in-flight 合并：同 key 的并发请求只发一次上游 */
 function withCache<V>(cache: TtlCache<V>, key: string, producer: () => Promise<V>): Promise<V> {
   const hit = cache.get(key);
-  if (hit !== undefined) return Promise.resolve(hit);
+  if (hit !== undefined) {
+    countCacheHit();
+    return Promise.resolve(hit);
+  }
   const pending = inflight.get(key);
   if (pending) return pending as Promise<V>;
   const promise = producer()
@@ -44,6 +48,7 @@ function guessCategory(query: string): CategoryId {
 
 export class BaiduServerProvider implements AnalysisProvider {
   private quotaError: Error | null = null;
+  private budgetError: Error | null = null;
   constructor(
     private ak: string,
     /** 上游调用计数回调（批量任务用于真实请求预算） */
@@ -57,6 +62,12 @@ export class BaiduServerProvider implements AnalysisProvider {
   /** 一次请求计一次预算；任何配额响应会锁止本次分析的后续上游请求。 */
   private async call(path: string, params: Record<string, string>, bucket: Parameters<typeof callBaidu>[2]) {
     if (this.quotaError) throw this.quotaError;
+    if (this.budgetError) throw this.budgetError;
+    if (overBudget()) {
+      // 本地每日预算触顶：与上游配额走同一条优雅降级路径，但语义明确区分
+      this.budgetError = new Error('本地每日预算触顶，已停止发起新的上游请求');
+      throw this.budgetError;
+    }
     this.count();
     // 重试在各方法显式执行，避免底层隐式重试绕过请求计数。
     const response = await callBaidu(path, params, bucket, this.ak, 0);

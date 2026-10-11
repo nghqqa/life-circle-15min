@@ -5,6 +5,7 @@ import type { LatLng, Poi } from '../../shared/types.js';
 import { analyzeWithServerProvider } from './provider.js';
 import { buckets, callBaidu } from './baidu.js';
 import { TtlCache } from './cache.js';
+import { overBudget } from './usage.js';
 
 /**
  * 街道级批量体检：以街道中心为圆心检索住宅小区作为采样点，
@@ -229,6 +230,12 @@ export function startStreetBatch(
         if (job.requestCount > job.requestBudget) {
           job.status = 'error';
           job.error = `已超出请求预算（${job.requestBudget} 次上游调用），任务中止以保护配额`;
+          return;
+        }
+        if (overBudget()) {
+          // 本地每日预算触顶：暂停任务，已完成小区结果全部保留（非上游配额错误）
+          job.status = 'error';
+          job.error = `本地每日预算触顶，任务暂停于第 ${job.done + 1}/${job.total} 个小区（已完成结果保留）`;
           return;
         }
         if (job.consecutiveFailures >= 5) {

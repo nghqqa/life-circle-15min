@@ -555,6 +555,10 @@ async function analyze() {
     switchTab('report');
     projects?.analysisCompleted();
     hud.note(`完成：总分 ${score.total}（${score.grade}），发现 ${gap.patches.length} 个灰色区域，给出 ${planSites.length} 条补点建议`);
+    void fetch('/api/usage').then((res) => res.json()).then((data) => {
+      const u = data?.usage;
+      if (u) hud.note(`今日上游请求 ${u.requests.total}${u.dailyBudget > 0 ? `/${u.dailyBudget}` : ''} · 缓存命中 ${u.cacheHits} · 本地进程计数，非平台账户余额${u.overBudget ? ' · 已触顶暂停' : ''}`);
+    }).catch(() => { /* 演示模式无此端点 */ });
     hud.finish();
   } finally {
     analyzing = false;

@@ -55,7 +55,12 @@ export function planFacilitiesFromCoverage(
   coveredMasks: Record<string, Uint8Array>,
   field: TimeField,
   personaSpeed: number,
-  opts: { topK?: number; coreRadiusM?: number; unknownCategories?: string[] } = {}
+  opts: {
+    topK?: number; coreRadiusM?: number; unknownCategories?: string[];
+    customCandidates?: import('./types.js').CustomCandidate[];
+    noGoZones?: import('./types.js').NoGoZone[];
+    budget?: import('./types.js').BudgetConstraint;
+  } = {}
 ): PlanSite[] {
   const topK = opts.topK ?? THRESHOLDS.planTopK;
   const R = opts.coreRadiusM ?? THRESHOLDS.coreRadiusM;
@@ -63,6 +68,14 @@ export function planFacilitiesFromCoverage(
   const stepM = gridExtentM(field) / (n - 1);
   // 检索失败（未知）的类别：掩码不可信（未知 ≠ 缺失），不得生成补建建议
   const unknown = new Set<string>(opts.unknownCategories ?? gap.unknownCategories ?? []);
+
+  // №8 预算约束：最大数量与「总预算 / 单点成本」共同限制输出条数
+  let limit = topK;
+  const b = opts.budget;
+  if (b?.maxSites !== undefined && Number.isFinite(b.maxSites)) limit = Math.min(limit, Math.max(0, Math.floor(b.maxSites)));
+  if (b?.totalBudgetWan !== undefined && b?.costPerSiteWan !== undefined && b.costPerSiteWan > 0) {
+    limit = Math.min(limit, Math.floor(b.totalBudgetWan / b.costPerSiteWan));
+  }
 
   const cov: Record<string, Uint8Array> = {};
   for (const cat of CORE_CATEGORIES) cov[cat] = Uint8Array.from(coveredMasks[cat]);
@@ -80,16 +93,37 @@ export function planFacilitiesFromCoverage(
   // 按步长抽样去密；每个候选对其缺失的每个已知核心类别各生成一条（贪心按收益择优）。
   // 未知类别（检索失败）跳过——掩码不可信，不得据此建议补建。
   const candidates: { k: number; cat: string }[] = [];
+  const gridCandidates: { k: number; cat: string }[] = [];
   const stride = Math.max(1, Math.round(R / stepM / 3));
   for (let k = 0; k < n * n; k++) {
     if (weight[k] <= 0) continue;
     if (k % (stride * stride) !== 0) continue; // 稳定抽样去密
     const missingHere = CORE_CATEGORIES.filter((c) => cov[c][k] === 0 && !unknown.has(c));
-    for (const cat of missingHere) candidates.push({ k, cat });
+    if (!missingHere.length) continue;
+    const lat = latOfRow(field, Math.floor(k / n));
+    const lng = lngOfCol(field, k % n);
+    // №7 禁建区：区域内的网格候选直接排除
+    if ((opts.noGoZones ?? []).some((z) => localDistM(lat, lng, z.center.lat, z.center.lng) <= z.radiusM)) continue;
+    for (const cat of missingHere) gridCandidates.push({ k, cat });
   }
+  // №7 自定义候选：手动指定落点（吸附到最近网格），与网格候选同场竞价；
+  // 自定义候选排在前面——收益打平时用户显式指定的落点优先
+  const customKeys = new Set<string>();
+  for (const cc of opts.customCandidates ?? []) {
+    if (!CORE_CATEGORIES.includes(cc.category)) continue;
+    // F5：未知/不可评估类别与网格候选同规则——不得据未知掩码推断缺失与收益
+    if (unknown.has(cc.category)) continue;
+    if ((opts.noGoZones ?? []).some((z) => localDistM(cc.latLng.lat, cc.latLng.lng, z.center.lat, z.center.lng) <= z.radiusM)) continue;
+    const k = snapToCell(field, n, cc.latLng);
+    const key = `${k}:${cc.category}`;
+    if (customKeys.has(key)) continue;
+    customKeys.add(key);
+    candidates.push({ k, cat: cc.category });
+  }
+  candidates.push(...gridCandidates);
 
   const sites: PlanSite[] = [];
-  for (let rank = 1; rank <= topK && candidates.length; rank++) {
+  for (let rank = 1; rank <= limit && candidates.length; rank++) {
     let bestIdx = -1;
     let bestGain = 0;
     let bestCovered: number[] = [];
@@ -152,10 +186,20 @@ export function planFacilitiesFromCoverage(
       beforePct: Math.round(catBeforePct * 1000) / 10,
       afterPct: Math.round(catAfterPct * 1000) / 10,
       estWalkMin: Math.round(estWalkMin * 10) / 10,
-      rationale: `补建${CATEGORY_MAP[bestCat as keyof typeof CATEGORY_MAP].name}后，其 1km 服务盘新覆盖 ${bestCovered.length} 个居住网格，「${CATEGORY_MAP[bestCat as keyof typeof CATEGORY_MAP].name}」居住覆盖率 ${Math.round(catBeforePct * 100)}% → ${Math.round(catAfterPct * 100)}%`
+      rationale: `${customKeys.has(`${k}:${bestCat}`) ? '自定义候选落点：' : ''}补建${CATEGORY_MAP[bestCat as keyof typeof CATEGORY_MAP].name}后，其 1km 服务盘新覆盖 ${bestCovered.length} 个居住网格，「${CATEGORY_MAP[bestCat as keyof typeof CATEGORY_MAP].name}」居住覆盖率 ${Math.round(catBeforePct * 100)}% → ${Math.round(catAfterPct * 100)}%`
     });
   }
   return sites;
+}
+
+/** №7 自定义落点吸附到最近网格单元（误差 ≤ 半格距，rationale 中已标注为自定义候选） */
+function snapToCell(field: TimeField, n: number, p: LatLng): number {
+  const stepM = gridExtentM(field) / (n - 1);
+  const stepLat = stepM / 111320;
+  const stepLng = stepM / (111320 * Math.cos((p.lat * Math.PI) / 180));
+  const i = Math.max(0, Math.min(n - 1, Math.round((field.latMax - p.lat) / stepLat)));
+  const j = Math.max(0, Math.min(n - 1, Math.round((p.lng - field.lngMin) / stepLng)));
+  return i * n + j;
 }
 
 function gridExtentM(f: TimeField): number {

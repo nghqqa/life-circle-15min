@@ -1,4 +1,5 @@
 import { TokenBucket } from './ratelimit.js';
+import { countUpstream } from './usage.js';
 
 const BASE = 'https://api.map.baidu.com';
 
@@ -49,6 +50,7 @@ export async function callBaidu(
     if (!(await bucket.take())) {
       return { ok: false, httpStatus: 429, body: { status: -1, message: '服务端限流，请稍后重试' }, tookMs: Date.now() - t0 };
     }
+    countUpstream(path);
     try {
       const res = await fetchWithTimeout(url.toString(), 8000);
       if (res.status >= 500) throw new Error(`upstream ${res.status}`);
