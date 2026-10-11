@@ -6,7 +6,7 @@ import type { CategoryId, LatLng, Poi } from '../shared/types.js';
 const stubs = vi.hoisted(() => ({ upstream: vi.fn(), analyze: vi.fn() }));
 vi.mock('../server/src/baidu.js', () => ({ callBaidu: stubs.upstream, buckets: { place: {}, route: {}, geo: {} } }));
 vi.mock('../server/src/provider.js', () => ({ analyzeWithServerProvider: stubs.analyze }));
-import { cancelJob, startStreetBatch, type BatchJob } from '../server/src/batch.js';
+import { cancelJob, resumeStreetBatch, startStreetBatch, type BatchJob } from '../server/src/batch.js';
 
 // Exercise the actual batch loop and summaries. Both upstream entry points are stubbed.
 const center: LatLng = { lat: 28.46, lng: 117.97 }, sampleCount = 10;
@@ -140,5 +140,39 @@ describe('城区批量体检 · 完整性与失败熔断', () => {
     job = start(); await settled(job);
     expect(job.status).toBe('cancelled'); expect(job.done).toBe(1);
     expect(job.communities).toHaveLength(1); expect(stubs.analyze).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('№12 审查修复：队列必然接续', () => {
+  it('配额中止等早退路径释放执行位，后续新任务不被卡死', async () => {
+    stubs.analyze.mockResolvedValueOnce(structuredClone(reports.quota));
+    stubs.analyze.mockResolvedValue(structuredClone(reports.dense));
+    const a = startStreetBatch('ak', center, '配额中止任务', 6500, 5, 'district');
+    await vi.waitFor(() => expect(a.status).not.toBe('running'), { timeout: 3000 });
+    expect(a.status).toBe('error');
+    const b = startStreetBatch('ak', center, '接续任务', 6500, 5, 'district');
+    await vi.waitFor(() => expect(b.status).toBe('done'), { timeout: 3000 });
+    expect(b.done).toBe(b.total);
+  });
+
+  it('续跑进度：total 含已完成+剩余，done 连续累加不出现 5/3', async () => {
+    stubs.analyze.mockReset();
+    stubs.analyze.mockImplementation(async (p: any, _k: string, onCall?: () => void) => {
+      onCall?.();
+      const n = stubs.analyze.mock.calls.length;
+      const base = n <= 4 ? reports.dense : reports.failed;
+      return { ...structuredClone(base), center: p.center };
+    });
+    const job = startStreetBatch('ak', center, '进度验收', 6500, 5, 'district');
+    await vi.waitFor(() => expect(job.status).not.toBe('running'), { timeout: 3000 });
+    expect(job.done).toBe(job.total);
+    stubs.analyze.mockImplementation(async (p: any, _k: string, onCall?: () => void) => {
+      onCall?.();
+      return { ...structuredClone(reports.dense), center: p.center };
+    });
+    const resumed = resumeStreetBatch('ak', job.id, 'remaining');
+    await vi.waitFor(() => expect(resumed!.status).toBe('done'), { timeout: 3000 });
+    expect(resumed!.done).toBe(resumed!.total);
+    expect(resumed!.done).toBeGreaterThanOrEqual(job.done);
   });
 });
