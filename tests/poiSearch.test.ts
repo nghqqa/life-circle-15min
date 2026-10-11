@@ -32,22 +32,22 @@ describe('设施检索的有限分页与完整性', () => {
       reportedTotal: 22, cacheHit: true, collectedAt: '2026-10-09T01:00:00.000Z' });
   });
 
-  it('总数大于三页预算时标为截断，不以60条冒充完整数据', async () => {
+  it('总数大于五页预算时标为截断，不以100条冒充完整数据', async () => {
     const pages: number[] = [];
     const r = await searchPoiPages({ keyword: '药店', category: 'pharmacy', source: 'server', pageLimit: 999,
-      fetchPage: async (page) => { pages.push(page); return { pois: rows(page * 20, 20), reportedTotal: 83 }; }
+      fetchPage: async (page) => { pages.push(page); return { pois: rows(page * 20, 20), reportedTotal: 108 }; }
     });
-    expect(pages).toEqual([0, 1, 2]);
-    expect(r.completeness).toMatchObject({ status: 'truncated', reportedTotal: 83, fetchedCount: 60, pageLimit: 3 });
+    expect(pages).toEqual([0, 1, 2, 3, 4]);
+    expect(r.completeness).toMatchObject({ status: 'truncated', reportedTotal: 108, fetchedCount: 100, pageLimit: 5 });
     expect(assessmentUnavailableCategories([], [r.completeness])).toEqual(['pharmacy']);
   });
 
-  it('已知总数恰好60时三页即可证实取尽，不额外请求第四页', async () => {
+  it('已知总数恰好100时五页即可证实取尽，不额外请求第六页', async () => {
     const pages: number[] = [];
     const result = await searchPoiPages({ keyword: '药店', category: 'pharmacy', source: 'server',
-      fetchPage: async (page) => { pages.push(page); return { pois: rows(page * 20, 20), reportedTotal: 60 }; } });
-    expect(pages).toEqual([0, 1, 2]);
-    expect(result.completeness).toMatchObject({ status: 'complete', fetchedCount: 60, reportedTotal: 60 });
+      fetchPage: async (page) => { pages.push(page); return { pois: rows(page * 20, 20), reportedTotal: 100 }; } });
+    expect(pages).toEqual([0, 1, 2, 3, 4]);
+    expect(result.completeness).toMatchObject({ status: 'complete', fetchedCount: 100, reportedTotal: 100 });
   });
 
   it('末页失败保留成功页，失败请求不算缓存命中', async () => {

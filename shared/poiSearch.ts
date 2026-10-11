@@ -2,7 +2,9 @@ import { dedupePois } from './poi.js';
 import type { CategoryId, ChannelName, Poi, PoiSearchCompleteness, PoiSearchResult, PoiSearchStatus } from './types.js';
 
 export const POI_PAGE_SIZE = 20;
-export const POI_PAGE_LIMIT = 3;
+/** 单关键词分页预算：5 页 × 20 条 = 100 条。百度 place 单页上限 20 条，只能加页数；
+ *  调大这里即可放宽（配额成本：单次分析最坏 12 关键词 × 5 页 = 60 次检索调用）。 */
+export const POI_PAGE_LIMIT = 5;
 
 /** 各通道只需将一页返回映射到此契约；页号从 0 开始。 */
 export interface PoiSearchPage {

@@ -28,7 +28,7 @@ function provider(mode: Mode): AnalysisProvider {
         if (mode === 'quota') throw Object.assign(new Error('受控配额耗尽'), { status: 302 });
         if (mode === 'empty') return { pois: [], reportedTotal: 0 };
         if (mode === 'dense' && ['supermarket', 'residential'].includes(category)) {
-          return { pois: Array.from({ length: 20 }, (_, i) => poi(keyword, category, page * 20 + i)), reportedTotal: 100 };
+          return { pois: Array.from({ length: 20 }, (_, i) => poi(keyword, category, page * 20 + i)), reportedTotal: 120 }; // 5 页预算取 100 < 120 → 保持截断语义
         }
         return { pois: [poi(keyword, category)], reportedTotal: 1 };
       } });

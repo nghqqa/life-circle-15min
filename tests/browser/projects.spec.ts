@@ -145,7 +145,7 @@ test('代理分页截断及配额耗尽可见，后续关键词和过街扫描�
   await page.goto('/');
   await page.locator('#btn-analyze').click();
   await expect(page.locator('#project-status')).toContainText('已保存', { timeout: 20_000 });
-  expect(queries).toEqual(['医院:0', '医院:1', '医院:2', '诊所:0']);
+  expect(queries).toEqual(['医院:0', '医院:1', '医院:2', '医院:3', '医院:4', '诊所:0']);
   expect(crossings).toBe(0);
   await expect(page.locator('.data-quality')).toContainText('达到上限');
   await expect(page.locator('.data-quality')).toContainText('未执行');
