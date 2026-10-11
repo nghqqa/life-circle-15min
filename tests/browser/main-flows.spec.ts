@@ -445,3 +445,37 @@ test('历史趋势：同城多期对照，规则差异期标注不可直接比',
   await expect(page.locator('#panel-body')).toContainText('规则 deadbeef'); // 异规则期点名
   await expect(page.locator('#panel-body')).toContainText('不能仅凭分数上升');
 });
+
+test('样本补录：登记去重提示、并入下一次体检并在警告中说明口径', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  await page.locator('[data-tab="gaps"]').click();
+  await page.locator('#supp-name').fill('手工登记小区');
+  await page.locator('#supp-lat').fill('28.462');
+  await page.locator('#supp-lng').fill('117.972');
+  await page.locator('#supp-hh').fill('120');
+  await page.locator('#supp-src').fill('社区访谈');
+  await page.locator('#supp-add').click();
+  await expect(page.locator('#panel-body table tbody tr').filter({ hasText: '手工登记小区' })).toHaveCount(1);
+  // 重复录入提示
+  await page.locator('#supp-name').fill('重复点');
+  await page.locator('#supp-lat').fill('28.462');
+  await page.locator('#supp-lng').fill('117.972');
+  await page.locator('#supp-src').fill('自填');
+  await page.locator('#supp-add').click();
+  await expect(page.locator('#banner')).toContainText('50m 内已存在');
+  // 重新体检并入
+  await page.locator('#ly-cross').uncheck();
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 20_000 });
+  await page.locator('[data-tab="report"]').click();
+  await expect(page.locator('#panel-body')).toContainText('人工补录住宅样本 2 条');
+  const report = JSON.parse(await (async () => {
+    const pending = page.waitForEvent('download');
+    await page.locator('#btn-json').click();
+    return readFile((await (await pending).path())!, 'utf8');
+  })());
+  expect(report.warnings.join('')).toContain('人工补录');
+  expect(report.score.total).toBe(75); // 补录并入后覆盖率提升：C74 → B75
+});
+
