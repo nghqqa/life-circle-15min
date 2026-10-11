@@ -61,3 +61,43 @@ describe('调用预算与用量计数', () => {
     expect(snap.cacheHits).toBe(0);
   });
 });
+
+describe('№13-F2/F8 审查修复', () => {
+  it('callBaidu 预算触顶：代理等所有入口都被拦截且不出网', async () => {
+    vi.resetModules();
+    process.env.BAIDU_LOCAL_DAILY_BUDGET = '1';
+    const { countUpstream } = await import('../server/src/usage.js');
+    const { callBaidu, buckets } = await import('../server/src/baidu.js');
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    countUpstream('/place/v2/search'); // 用掉预算 1/1
+    const r = await callBaidu('/geocoding/v3/', { address: 'x' }, buckets.geo, 'test-ak', 0);
+    expect(r.ok).toBe(false);
+    expect(r.body.message).toContain('预算触顶');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('F8：真实 provider 二次相同检索命中缓存并计入 cacheHits', { timeout: 15000 }, async () => {
+    vi.resetModules();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    const { BaiduServerProvider } = await import('../server/src/provider.js');
+    const { usageSnapshot } = await import('../server/src/usage.js');
+    const hits = [0, 1].map((page) => ({
+      ok: true, status: 200,
+      json: async () => ({ status: 0, total: 1, results: [{ uid: `u-${page}`, name: `便利店${page}`, location: { lat: 28.51, lng: 118.01 }, address: 'x' }] })
+    }));
+    let n = 0;
+    vi.stubGlobal('fetch', async () => hits[Math.min(n++, 1)]);
+    const provider = new BaiduServerProvider('test-ak');
+    const loc = { lat: 28.5, lng: 118 };
+    const first = await provider.searchPoiDetailed('商超', 'supermarket', loc, 2000);
+    const before = usageSnapshot().cacheHits;
+    const second = await provider.searchPoiDetailed('商超', 'supermarket', loc, 2000);
+    expect(second.completeness.cacheHit).toBe(true);
+    expect(usageSnapshot().cacheHits).toBe(before + 1);
+    expect(first.pois.length).toBe(second.pois.length);
+    vi.unstubAllGlobals();
+  });
+});

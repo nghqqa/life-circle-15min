@@ -141,7 +141,10 @@ export class BaiduServerProvider implements AnalysisProvider {
     };
     const key = `place:v2:${category}:${JSON.stringify(params)}`;
     const cached = placeCache.get(key);
-    if (cached !== undefined) return { ...cached, cacheHit: true };
+    if (cached !== undefined) {
+      countCacheHit();
+      return { ...cached, cacheHit: true };
+    }
     const data: PoiSearchPage = await withCache(placeCache, key, async () => {
       // 上游偶发 status=1（Internal Service Error）为瞬态错误：重试两次，配额类错误不重试
       let r = await this.call('/place/v2/search', params, buckets.place);
