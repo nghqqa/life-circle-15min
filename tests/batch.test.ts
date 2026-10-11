@@ -194,3 +194,37 @@ describe('№12 批量任务排队与续跑', () => {
     expect(resumed!.communities.filter((c) => c.score >= 0).length).toBe(job.total);
   });
 });
+
+describe('№12 审查修复：队列必然接续', () => {
+  it('配额中止等早退路径释放执行位，后续新任务不被卡死', async () => {
+    stubs.analyze.mockResolvedValueOnce(structuredClone(reports.quota));
+    stubs.analyze.mockResolvedValue(structuredClone(reports.dense));
+    const a = startStreetBatch('ak', center, '配额中止任务', 6500, 5, 'district');
+    await vi.waitFor(() => expect(a.status).not.toBe('running'), { timeout: 3000 });
+    expect(a.status).toBe('error');
+    const b = startStreetBatch('ak', center, '接续任务', 6500, 5, 'district');
+    await vi.waitFor(() => expect(b.status).toBe('done'), { timeout: 3000 });
+    expect(b.done).toBe(b.total);
+  });
+
+  it('续跑进度：total 含已完成+剩余，done 连续累加不出现 5/3', async () => {
+    stubs.analyze.mockReset();
+    stubs.analyze.mockImplementation(async (p: any, _k: string, onCall?: () => void) => {
+      onCall?.();
+      const n = stubs.analyze.mock.calls.length;
+      const base = n <= 4 ? reports.dense : reports.failed;
+      return { ...structuredClone(base), center: p.center };
+    });
+    const job = startStreetBatch('ak', center, '进度验收', 6500, 5, 'district');
+    await vi.waitFor(() => expect(job.status).not.toBe('running'), { timeout: 3000 });
+    expect(job.done).toBe(job.total);
+    stubs.analyze.mockImplementation(async (p: any, _k: string, onCall?: () => void) => {
+      onCall?.();
+      return { ...structuredClone(reports.dense), center: p.center };
+    });
+    const resumed = resumeStreetBatch('ak', job.id, 'remaining');
+    await vi.waitFor(() => expect(resumed!.status).toBe('done'), { timeout: 3000 });
+    expect(resumed!.done).toBe(resumed!.total);
+    expect(resumed!.done).toBeGreaterThanOrEqual(job.done);
+  });
+});

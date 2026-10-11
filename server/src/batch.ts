@@ -271,8 +271,8 @@ const runJob = async (job: BatchJob, samplesOverride?: Poi[]): Promise<void> => 
       // №12 续跑：只处理未完成样本，已完成结果直接沿用，不重复计费
       job.samples = samplesOverride;
       filtered = samplesOverride;
-      job.total = samplesOverride.length;
-      job.done = 0;
+      // 审查修复：total = 已完成 + 剩余，done 从已完成数继续累加（进度不再 5/3、不重算已完成）
+      job.total = job.done + samplesOverride.length;
       if (!job.total) {
         job.status = 'done';
         persistJob(job);
@@ -379,6 +379,7 @@ const runJob = async (job: BatchJob, samplesOverride?: Poi[]): Promise<void> => 
           });
         }
         job.done++;
+        persistJob(job); // 审查修复：逐小区保存进度（重启后 done/communities 一致）
       }
       const valid = job.communities.filter((c) => c.score >= 0);
       const sorted = [...valid].sort((a, b) => b.score - a.score);
@@ -431,16 +432,17 @@ const runJob = async (job: BatchJob, samplesOverride?: Poi[]): Promise<void> => 
     } catch (err) {
       job.status = 'error';
       job.error = String((err as Error).message ?? err);
-    }
-    // №12 任务结算：释放全局执行位、持久化并接续排队任务
-    if (activeJob === job) activeJob = null;
-    persistJob(job);
-    const next = pendingQueue.shift();
-    if (next && next.status === 'queued') {
-      next.status = 'running';
-      activeJob = next;
-      persistJob(next);
-      void runJob(next);
+    } finally {
+      // 审查修复：取消/配额/预算/失败等所有退出路径都经过 finally——队列必然接续
+      if (activeJob === job) activeJob = null;
+      persistJob(job);
+      const next = pendingQueue.shift();
+      if (next && next.status === 'queued') {
+        next.status = 'running';
+        activeJob = next;
+        persistJob(next);
+        void runJob(next);
+      }
     }
   };
 
