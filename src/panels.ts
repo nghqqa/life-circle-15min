@@ -234,6 +234,7 @@ function reportHtml(r: AnalysisResult): string {
   ${r.cumulative ? `<div class="rpt-sub" style="margin:-6px 0 10px">累积机会（已取样本口径）：${r.minutes} 分钟步行圈内查得设施 <b>${r.cumulative.total}</b> 处 · 覆盖 <b>${r.cumulative.categoriesCovered}</b>/10 类${r.cumulative.missingCategories.length ? ' · 样本中未查得：' + escapeHtml(r.cumulative.missingCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c).join('、')) : ''}</div>` : ''}
   ${r.accuracy && r.accuracy.samples > 0 ? `<div class="rpt-sub" style="margin:-6px 0 10px">插值精度核验：抽样 ${r.accuracy.samples} 个算路点${r.mock ? '（当前含演示数据，仅供流程验证）' : ''}，模型估计平均绝对误差 <b>${r.accuracy.maeMinutes} 分钟（${r.accuracy.maePercent}%）</b>，最大偏差 ${r.accuracy.worstPercent}%</div>` : ''}
   ${r.warnings?.length ? `<div class="rpt-summary" style="background:var(--warn-soft)"><span class="sum-label" style="color:var(--warn)">口径与警告</span>${r.warnings.map((w) => escapeHtml(w)).join('；')}</div>` : ''}
+  ${r.persona === 'elderly' ? `<div class="rpt-summary"><span class="sum-label">老年友好解读</span>本页按老年人口径计算（步速 52m/min，已含过街等待与步速折减）；过街设施：天桥 ${r.crossings?.overpass ?? 0} 处 · 地下通道 ${r.crossings?.underpass ?? 0} 处。公园绿地可作歇憩点参考。<b>口径边界：台阶、坡度、无障碍通道等障碍未建模</b>——步速折减是参数化近似，无障碍能力需实地核验，不能以「分数不差」替代无障碍评估。</div>` : ''}
   <div class="rpt-summary"><span class="sum-label">诊断</span>${escapeHtml(r.score.summary)}</div>
   ${r.score.missingDataCategories?.length ? `<div class="rpt-sub" style="margin:-8px 0 10px;color:var(--warn)">※ ${escapeHtml(r.score.missingDataCategories.join('、'))}检索失败或不完整，已取数量仅供参考，相关类别未计入评分。</div>` : ''}
   ${dataQualityHtml(r)}
@@ -381,7 +382,6 @@ function wireBoundary() {
     banner('边界已清除，恢复默认半径范围（下一次体检生效）。', 'info');
     render();
   });
->>>>>>> feat/boundary
 }
 
 function gapsHtml(r: AnalysisResult): string {
