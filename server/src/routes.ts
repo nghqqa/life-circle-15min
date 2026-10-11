@@ -4,7 +4,7 @@ import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
-import { startStreetBatch, getJob, cancelJob, sweepJobs } from './batch.js';
+import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, resumeStreetBatch } from './batch.js';
 
 /**
  * 百度 Web API 代理：
@@ -268,6 +268,20 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
   });
 
   // GET /api/batch/status/:jobId → 任务进度与结果
+  // №12 任务找回/续跑/失败重试
+  router.get('/batch/jobs', (_req, res) => {
+    res.json({ status: 0, jobs: listJobs().map((j) => ({ id: j.id, status: j.status, centerName: j.centerName, createdAt: j.createdAt, done: j.done, total: j.total })) });
+  });
+  router.post('/batch/resume', (req, res) => {
+    const { jobId, mode } = req.body ?? {};
+    const job = resumeStreetBatch(cfg.akServer, String(jobId ?? ''), mode === 'failed' ? 'failed' : 'remaining');
+    if (!job) {
+      res.status(404).json({ status: -1, message: '任务不存在、无未完成样本，或已在运行' });
+      return;
+    }
+    res.json({ status: 0, jobId: job.id, total: job.total, resumed: true });
+  });
+
   router.get('/batch/status/:jobId', (req, res) => {
     const job = getJob(String(req.params.jobId));
     if (!job) {
