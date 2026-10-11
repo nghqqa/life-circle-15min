@@ -141,7 +141,7 @@ export function render() {
     const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-fly]') : null;
     if (!el || !body.contains(el)) return;
     const [lat, lng] = (el.dataset.fly ?? '').split(',').map(Number);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ lat, lng });
+    if (Number.isFinite(lat) && Number.isFinite(lng)) map.highlight({ lat, lng }, el.dataset.flyName);
   };
 }
 
@@ -412,7 +412,7 @@ function gapsHtml(r: AnalysisResult): string {
       <td>${p.missingCats.map((c) => CATEGORY_MAP[c].name).join('、')}</td>
       <td class="num">${(p.weightShare * 100).toFixed(0)}%</td>
       <td class="num">${p.maxNearestM > 0 ? Math.round(p.maxNearestM) + 'm' : '无'}</td>
-      <td><button class="btn ghost plan-loc" data-fly="${p.centroid.lat},${p.centroid.lng}">定位</button></td>
+      <td><button class="btn ghost plan-loc" data-fly="${p.centroid.lat},${p.centroid.lng}" data-fly-name="灰色斑块 #${p.id}">定位</button></td>
     </tr>`
     )
     .join('');
@@ -1083,7 +1083,7 @@ function communityTable(communities: (StreetCommunity & { coverageUnavailable?: 
       <td>${c.grade === '-' ? '—' : `<span class="pill ${c.grade === 'A' || c.grade === 'B' ? 'ok' : c.grade === 'C' ? 'mid' : 'bad'}">${c.grade}</span>`}</td>
       <td class="num">${covText}</td>
       <td>${c.dominantMissing ? CATEGORY_MAP[c.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? c.dominantMissing : '—'}</td>
-      <td><button class="btn ghost plan-loc" data-fly="${c.center.lat},${c.center.lng}">定位</button></td>
+      <td><button class="btn ghost plan-loc" data-fly="${c.center.lat},${c.center.lng}" data-fly-name="${escapeHtml(shortName(c.name))}">定位</button></td>
     </tr>`;
     })
     .join('');
