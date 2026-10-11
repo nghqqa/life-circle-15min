@@ -11,6 +11,7 @@ import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shar
 import { explainResult } from './explain.js';
 import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
 import { listCorrections } from './corrections.js';
+import { addSupplement, getSupplements, removeSupplement } from './supplements.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
 
@@ -128,7 +129,7 @@ export function render() {
       animateGrade(r.score.total); renderCharts(r);
       break;
     case 'checklist': if (r) body.innerHTML = checklistHtml(r); break;
-    case 'gaps': if (r) body.innerHTML = gapsHtml(r); break;
+    case 'gaps': if (r) { body.innerHTML = gapsHtml(r) + supplementsHtml(r); wireSupplements(); } break;
     case 'plan': body.innerHTML = r ? planHtml(r) : '<div class="empty-tip">先完成一次体检</div>'; wirePlanActions(); break;
     case 'compare': if (r) { body.innerHTML = compareHtml(r); wireComparison(); } break;
     case 'street': body.innerHTML = streetHtml(); wireStreet(); break;
@@ -284,6 +285,72 @@ function checklistHtml(r: AnalysisResult): string {
     <thead><tr><th>设施项</th><th>阈值</th><th>实测最近</th><th>判定</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+/** №9 住宅样本补录：手动/JSON 导入，下一次体检并入采样；口径说明明示 */
+function supplementsHtml(r: AnalysisResult): string {
+  const store = getSupplements();
+  const entries = store?.entries ?? [];
+  const rows = entries.map((e, i) => `<tr>
+    <td>${escapeHtml(e.name)}</td><td class="num">${e.latLng.lat.toFixed(5)}, ${e.latLng.lng.toFixed(5)}</td>
+    <td>${e.households ?? '—'}</td><td>${escapeHtml(e.source)}<br/><span class="rpt-sub">${escapeHtml(new Date(e.at).toLocaleString('zh-CN'))}</span></td>
+    <td><button class="btn ghost" data-supp-remove="${i}" style="font-size:12px;padding:2px 6px">移除</button></td></tr>`).join('');
+  return `<div class="sec-title">住宅样本补录（№9）</div>
+  <div class="rpt-summary">补录样本在下一次体检并入住宅采样（名称带「(补录)」后缀，覆盖率随之更新）；每条须填写<b>来源</b>，可选附汇总户数。真实人口口径未接入，不与样本口径混用。</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+    <input id="supp-name" class="input" placeholder="小区名" style="width:130px">
+    <input id="supp-lat" class="input" placeholder="纬度" style="width:100px">
+    <input id="supp-lng" class="input" placeholder="经度" style="width:100px">
+    <input id="supp-hh" class="input" placeholder="户数(可空)" style="width:90px">
+    <input id="supp-src" class="input" placeholder="来源(必填)" style="width:120px">
+    <button class="btn ghost" id="supp-add">添加</button>
+  </div>
+  <textarea id="supp-json" class="input" style="width:100%;height:56px;font-size:12px" placeholder='批量导入 JSON：[{"name":"xx","lat":28.46,"lng":117.97,"households":120,"source":"社区访谈"}]'></textarea>
+  <button class="btn ghost" id="supp-import" style="margin:6px 0">导入 JSON</button>
+  <table class="tbl"><thead><tr><th>名称</th><th>坐标</th><th>户数</th><th>来源 / 日期</th><th></th></tr></thead>
+  <tbody>${rows || '<tr><td colspan="5">暂无补录</td></tr>'}</tbody></table>
+  <div class="rpt-sub">重复（50m 内）与偏离分析中心的记录会提示；移除后下一次体检不再并入。</div>`;
+}
+
+function wireSupplements() {
+  const r = currentResult;
+  if (!r) return;
+  const center = r.center;
+  const radius = Math.max(...Object.values(r.model.radiusM));
+  const read = () => ({
+    name: (document.getElementById('supp-name') as HTMLInputElement).value,
+    lat: Number((document.getElementById('supp-lat') as HTMLInputElement).value),
+    lng: Number((document.getElementById('supp-lng') as HTMLInputElement).value),
+    households: Number((document.getElementById('supp-hh') as HTMLInputElement).value),
+    source: (document.getElementById('supp-src') as HTMLInputElement).value
+  });
+  document.getElementById('supp-add')?.addEventListener('click', () => {
+    const e = read();
+    const res = addSupplement(center, radius, e);
+    if (!res) { banner('补录无效：请检查名称、来源与坐标范围。'); return; }
+    if (res.duplicate) banner(`提示：50m 内已存在「${res.duplicate.name}」，如非重复录入请忽略。`, 'warn', 8000);
+    else if (res.abnormal) banner('提示：该点偏离分析中心超过采样半径（已保留，请确认坐标）。', 'warn', 8000);
+    else banner('补录已保存，下一次体检并入采样。', 'info');
+    render();
+  });
+  document.getElementById('supp-import')?.addEventListener('click', () => {
+    const raw = (document.getElementById('supp-json') as HTMLTextAreaElement).value.trim();
+    if (!raw) { banner('请粘贴 JSON 数组后再导入。'); return; }
+    let items: any[];
+    try { items = JSON.parse(raw); } catch { banner('JSON 解析失败，请检查格式。'); return; }
+    if (!Array.isArray(items) || !items.length) { banner('JSON 需为非空数组。'); return; }
+    let okN = 0, dup = 0;
+    for (const it of items) {
+      const res = addSupplement(center, radius, { name: String(it.name ?? ''), lat: Number(it.lat), lng: Number(it.lng), households: Number(it.households), source: String(it.source ?? '未注明来源') });
+      if (res) { okN++; if (res.duplicate) dup++; }
+    }
+    banner(`导入完成：成功 ${okN} 条${dup ? `，其中疑似重复 ${dup} 条` : ''}。下一次体检并入采样。`, 'info', 10000);
+    render();
+  });
+  document.querySelectorAll('[data-supp-remove]').forEach((b) => b.addEventListener('click', () => {
+    removeSupplement(center, Number((b as HTMLElement).dataset.suppRemove));
+    render();
+  }));
 }
 
 function gapsHtml(r: AnalysisResult): string {
@@ -740,11 +807,8 @@ function streetHtml(): string {
     <div class="rpt-sub" id="street-scope-note" style="margin-top:6px">街道体检：半径 ≤3km、≤16 个采样点。切到「城区试点」可扩大到 8km / 30 点，结果将按街道分组排名（约 3-6 分钟，企业配额）。</div>
   </div>
   <div id="street-status"></div>
-<<<<<<< HEAD
-  <div id="street-usage" class="rpt-sub" style="margin-top:8px"></div>`;
-=======
+  <div id="street-usage" class="rpt-sub" style="margin-top:8px"></div>
   <div id="street-jobs" class="rpt-sub" style="margin-top:8px"></div>`;
->>>>>>> feat/batch-resume
 }
 
 function wireStreet() {

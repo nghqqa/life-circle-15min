@@ -41,6 +41,7 @@ import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
 import { parseOpenHours } from './openHours.js';
 import { addCorrection, listCorrections, undoCorrection, type CorrectionStatus } from './corrections.js';
+import { supplementPois } from './supplements.js';
 
 // ---------- 全局状态 ----------
 
@@ -518,6 +519,14 @@ async function analyze() {
       (note) => hud.note(note),
       stepUsage
     );
+    // №9 人工补录住宅样本并入采样（名称带(补录)后缀；来源标记 client）
+    const supps = supplementPois(state.center, THRESHOLDS.searchRadiusM);
+    for (const s of supps) {
+      pois.push({ uid: `supp-${s.lat}-${s.lng}`, name: s.name, lat: s.lat, lng: s.lng, category: 'residential', source: 'client', address: '人工补录' } as Poi);
+    }
+    if (supps.length) {
+      stepUsage.push({ name: '住宅样本补录并入', usage: { channel: 'client', ms: 0, note: `${supps.length} 条人工补录` } });
+    }
     hud.done(3, 'server', 0);
 
     // 5) 盲区识别 + 评分 + 清单 + 累积机会（失败类别按「无法判断」贯通）
@@ -561,6 +570,9 @@ async function analyze() {
       poiOk
     });
     warnings.push(...poiSearchWarnings(poiSearch));
+    if (supps.length) {
+      warnings.push(`含人工补录住宅样本 ${supps.length} 条（来源为用户自填，名称带(补录)后缀），已并入住宅采样与覆盖率；真实人口口径未接入（无普查数据），不与样本口径混用。`);
+    }
     if (quotaExhausted) warnings.unshift('已停止后续检索与过街扫描，避免继续消耗配额。');
     const generatedAt = new Date().toISOString();
     const mock = pre.channel === 'mock' || rm.channel === 'mock' || poiUsedMock;
