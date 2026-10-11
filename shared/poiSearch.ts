@@ -2,9 +2,15 @@ import { dedupePois } from './poi.js';
 import type { CategoryId, ChannelName, Poi, PoiSearchCompleteness, PoiSearchResult, PoiSearchStatus } from './types.js';
 
 export const POI_PAGE_SIZE = 20;
-/** 单关键词分页预算：5 页 × 20 条 = 100 条。百度 place 单页上限 20 条，只能加页数；
- *  调大这里即可放宽（配额成本：单次分析最坏 12 关键词 × 5 页 = 60 次检索调用）。 */
+/** 单关键词基础分页预算：5 页 × 20 条 = 100 条。百度 place 单页上限 20 条，只能加页数。 */
 export const POI_PAGE_LIMIT = 5;
+/** 住宅小区是人口覆盖率与盲区权重的分母，预算加倍（10 页 = 200 条）。 */
+export const POI_PAGE_LIMIT_RESIDENTIAL = POI_PAGE_LIMIT * 2;
+
+/** №分页动态化：类别预算上限（住宅加倍）。 */
+function pageCapFor(category: CategoryId): number {
+  return category === 'residential' ? POI_PAGE_LIMIT_RESIDENTIAL : POI_PAGE_LIMIT;
+}
 
 /** 各通道只需将一页返回映射到此契约；页号从 0 开始。 */
 export interface PoiSearchPage {
@@ -52,7 +58,9 @@ function bounded(value: number | undefined, fallback: number): number {
  */
 export async function searchPoiPages(options: PoiSearchOptions): Promise<PoiSearchResult> {
   const pageSize = bounded(options.pageSize, POI_PAGE_SIZE);
-  const pageLimit = bounded(options.pageLimit, POI_PAGE_LIMIT);
+  const cap = bounded(options.pageLimit, pageCapFor(options.category));
+  // 动态预算：初始用类别上限；首页拿到 reportedTotal 后精确收紧为 ceil(total/页大小)——需要几页取几页
+  let pageLimit = cap;
   const pois: Poi[] = [];
   let rawCount = 0;
   let pagesFetched = 0;
@@ -102,7 +110,11 @@ export async function searchPoiPages(options: PoiSearchOptions): Promise<PoiSear
     if (total == null) missingTotal = true;
     if (previousTotal !== undefined && previousTotal !== total) totalChanged = true;
     previousTotal = total;
-    if (total != null) reportedTotal = Math.max(reportedTotal ?? 0, total);
+    if (total != null) {
+      reportedTotal = Math.max(reportedTotal ?? 0, total);
+      // 动态收紧：ceil(total/页大小) 与当前预算取小——绝不为已可判定取尽的检索多花钱
+      pageLimit = Math.min(pageLimit, Math.max(1, Math.ceil(reportedTotal / pageSize)));
+    }
     const rows = totalOf(batch.rawCount) ?? batch.pois.length;
     rawCount += rows;
     if (rows !== batch.pois.length) invalidRows = true;

@@ -42,6 +42,23 @@ describe('设施检索的有限分页与完整性', () => {
     expect(assessmentUnavailableCategories([], [r.completeness])).toEqual(['pharmacy']);
   });
 
+  it('动态预算：首页拿到 total 后按需收紧——61 条只取 4 页即取尽', async () => {
+    const pages: number[] = [];
+    const r = await searchPoiPages({ keyword: '小区', category: 'residential', source: 'server',
+      fetchPage: async (page) => { pages.push(page); const n = page === 3 ? 1 : 20; return { pois: rows(page * 20, n), reportedTotal: 61 }; } });
+    expect(pages).toEqual([0, 1, 2, 3]);
+    expect(r.completeness).toMatchObject({ status: 'complete', fetchedCount: 61, reportedTotal: 61 });
+  });
+
+  it('动态预算：住宅（人口分母）上限加倍到 10 页=200 条，其余仍 5 页', async () => {
+    const rRes = await searchPoiPages({ keyword: '小区', category: 'residential', source: 'server',
+      fetchPage: async (page) => ({ pois: rows(page * 20, 20), reportedTotal: 300 }) });
+    expect(rRes.completeness).toMatchObject({ status: 'truncated', fetchedCount: 200, pageLimit: 10 });
+    const rOther = await searchPoiPages({ keyword: '公交站', category: 'busStop', source: 'server',
+      fetchPage: async (page) => ({ pois: rows(page * 20, 20), reportedTotal: 300 }) });
+    expect(rOther.completeness).toMatchObject({ status: 'truncated', fetchedCount: 100, pageLimit: 5 });
+  });
+
   it('已知总数恰好100时五页即可证实取尽，不额外请求第六页', async () => {
     const pages: number[] = [];
     const result = await searchPoiPages({ keyword: '药店', category: 'pharmacy', source: 'server',
