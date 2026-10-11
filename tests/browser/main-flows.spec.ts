@@ -313,3 +313,24 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#banner')).toContainText('薄弱社区表导出失败');
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
+
+test('设施路线核验：真实路网距离与时间场估计并列展示，重复核验命中缓存', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  const uid = comparisonFixture().pois.find(p => p.category !== 'residential')!.uid;
+  const clickRouteButton = (uid: string) => page.evaluate(uid => {
+    const btn = document.createElement('button');
+    btn.setAttribute('data-route-uid', uid);
+    document.body.appendChild(btn);
+    btn.click();
+    btn.remove();
+  }, uid);
+  await clickRouteButton(uid);
+  await expect(page.locator('#banner')).toContainText('路线核验');
+  await expect(page.locator('#banner')).toContainText('真实路网');
+  await expect(page.locator('#banner')).toContainText('时间场估计');
+  await clickRouteButton(uid);
+  await expect(page.locator('#banner')).toContainText('缓存');
+});
+
+
