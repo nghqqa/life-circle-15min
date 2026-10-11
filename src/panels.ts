@@ -112,12 +112,13 @@ export function render() {
     case 'street': body.innerHTML = streetHtml(); wireStreet(); break;
     case 'log': if (r) body.innerHTML = logHtml(r); break;
   }
-  body.querySelectorAll('[data-fly]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const [lat, lng] = ((el as HTMLElement).dataset.fly ?? '0,0').split(',').map(Number);
-      map.flyTo({ lat, lng });
-    });
-  });
+  // Delegate to the stable container: polling replaces street-result buttons later.
+  body.onclick = (event) => {
+    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-fly]') : null;
+    if (!el || !body.contains(el)) return;
+    const [lat, lng] = (el.dataset.fly ?? '').split(',').map(Number);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ lat, lng });
+  };
 }
 
 /** 评分数字滚动动画（尊重系统减少动效偏好） */

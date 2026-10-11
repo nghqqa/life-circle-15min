@@ -242,7 +242,10 @@ function bindUi() {
     try { downloadText(facilityCsv(state.result), '圈点-设施清单.csv', 'text/csv;charset=utf-8'); }
     catch { banner('设施表导出失败，当前数据未改动，请重试或下载项目快照。', 'warn'); }
   });
-  $('btn-json').addEventListener('click', exportJson);
+  $('btn-json').addEventListener('click', () => {
+    try { exportJson(); }
+    catch { banner('JSON 导出失败，当前数据未改动，请重试或下载项目快照。', 'warn'); }
+  });
 }
 
 function setPickMode(on: boolean) {
@@ -628,12 +631,7 @@ function exportJson() {
     steps: r.steps,
     mock: r.mock
   };
-  const blob = new Blob([JSON.stringify(plain, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `life-circle-report-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  downloadText(JSON.stringify(plain, null, 2), `life-circle-report-${Date.now()}.json`, 'application/json;charset=utf-8');
 }
 
 init().catch((e) => {
