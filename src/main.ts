@@ -35,6 +35,8 @@ import { setupProjects } from './projectUi.js';
 import { createProvenance } from '../shared/provenance.js';
 import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch, isPoiQuotaError } from '../shared/poiSearch.js';
 import type { CrossingSegment, CrossingStats, PoiSearchCompleteness } from '../shared/types.js';
+import { sampleTimeNearest } from '../shared/timefield.js';
+import { getCachedRoute, setCachedRoute, routeCacheKey } from './routeCache.js';
 import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
 
@@ -137,6 +139,54 @@ function drawResult(result: AnalysisResult) {
   map.setGaps(result.gap.patches);
   map.setPlanSites(displayedPlanSites());
   map.setCrossings(result.crossingSegments ?? []);
+  map.setRoute(null);
+}
+
+/** №5 点到设施真实路线核验：按需单次查询，真实路网距离与时间场估计并列展示，失败不伪装 */
+async function verifyRouteToPoi(uid: string) {
+  const r = state.result;
+  const poi: Poi | undefined = r?.pois.find((p) => p.uid === uid);
+  if (!r || !poi) {
+    banner('未找到该设施，请重新体检后再核验。');
+    return;
+  }
+  const key = routeCacheKey(state.center, poi);
+  const cached = getCachedRoute(key);
+  if (cached && cached.channel !== 'mock') {
+    // F1：合成兜底结果不是核验证据，不读取、不入缓存
+    map.setRoute([state.center, poi]);
+    reportRoute(poi, cached.distM, `${cached.channel} · 缓存`, r);
+    return;
+  }
+  if (cached) localStorage.removeItem(key);
+  banner('正在获取真实步行路线…', 'info', 8000);
+  try {
+    const res = state.chain ? await state.chain.walkingRoute(state.center, poi) : null;
+    const probe: RouteProbe | null = res?.value ?? null;
+    if (!res || !probe || !probe.ok || res.channel === 'mock') {
+      // F1：合成兜底（演示模式）返回的 ok 距离是估算，不是真实路网核验
+      banner(res?.channel === 'mock'
+        ? '当前为合成兜底通道：无法核验真实路网路线（展示的距离是估算，不写入核验缓存）。'
+        : '路线核验失败：步行规划通道当前不可用。系统不伪装估计结果，请稍后重试或更换通道。');
+      return;
+    }
+    setCachedRoute(key, probe.distM, res.channel);
+    map.setRoute([state.center, poi]);
+    reportRoute(poi, probe.distM, res.channel, r);
+  } catch (err) {
+    banner(`路线核验失败：${String((err as Error)?.message ?? err)}。系统不伪装估计结果。`);
+  }
+}
+
+function reportRoute(poi: Poi, distM: number, channel: string, r: AnalysisResult) {
+  const realMin = distM / r.model.speed;
+  const estMin = sampleTimeNearest(r.field, poi);
+  const delta = realMin - estMin;
+  banner(
+    `路线核验 · ${poi.name}：真实路网 ${distM}m ≈ ${realMin.toFixed(1)} 分钟（通道 ${CHANNEL_LABEL[channel as keyof typeof CHANNEL_LABEL] ?? channel}）· 时间场估计 ${estMin.toFixed(1)} 分钟（偏差 ${delta >= 0 ? '+' : ''}${delta.toFixed(1)}）`,
+    'info', 10000
+  );
+  map.flyTo(poi);
 }
 
 function restoreProject(project: ProjectSnapshot) {
@@ -166,6 +216,12 @@ function buildLegend() {
 
 function bindUi() {
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
+
+  // 设施「步行路线核验」按钮：地图弹窗/任何 data-route-uid 元素统一走此委托
+  document.body.addEventListener('click', (event) => {
+    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-route-uid]') : null;
+    if (el?.dataset.routeUid) void verifyRouteToPoi(el.dataset.routeUid);
+  });
 
   $('btn-analyze').addEventListener('click', () => analyze().catch((e) => {
     console.error(e);

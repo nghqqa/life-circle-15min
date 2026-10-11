@@ -8,7 +8,7 @@ import type { CrossingSegment, GapPatch, LatLng, PlanSite, Poi } from '../shared
  * 等时环/盲区轮廓为矢量折线，POI/规划点为标注。
  */
 
-export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'cross' | 'batch';
+export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'cross' | 'route' | 'batch';
 export interface BatchMapCommunity {
   name: string;
   center: LatLng;
@@ -23,8 +23,8 @@ export class MapView {
   map: any = null;
   ready = false;
 
-  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], cross: [], batch: [] };
-  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, cross: true, batch: true };
+  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], cross: [], route: [], batch: [] };
+  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, cross: true, route: true, batch: true };
   private data: Record<string, any> = {};
   private centerMarker: any = null;
 
@@ -169,6 +169,12 @@ export class MapView {
     this.renderLayer('cross');
   }
 
+  /** 路线核验连线：直线示意，距离与耗时以真实路网计算的报告文本为准；null 清除 */
+  setRoute(points: [LatLng, LatLng] | null) {
+    this.data.route = points;
+    this.renderLayer('route');
+  }
+
   toggleLayer(key: LayerKey, on: boolean) {
     this.visible[key] = on;
     this.renderLayer(key);
@@ -235,6 +241,18 @@ export class MapView {
       }
     }
 
+    if (key === 'route') {
+      const pts = this.data.route as [LatLng, LatLng] | null;
+      if (pts && pts.length === 2) {
+        const pl = new BMapGL.Polyline([
+          new BMapGL.Point(pts[0].lng, pts[0].lat),
+          new BMapGL.Point(pts[1].lng, pts[1].lat)
+        ], { strokeColor: '#2f6fed', strokeWeight: 3, strokeOpacity: 0.85, strokeStyle: 'dashed' });
+        map.addOverlay(pl);
+        this.overlays.route.push(pl);
+      }
+    }
+
     if (key === 'poi' && this.data.pois) {
       const poiList = this.data.pois as Poi[];
       for (const p of poiList) {
@@ -245,7 +263,7 @@ export class MapView {
         });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:180px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span></div>`,
+            `<div style="font-size:13px;min-width:180px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/><button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">步行路线核验</button></div>`,
             { width: 220 }
           );
           map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
