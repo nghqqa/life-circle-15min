@@ -34,7 +34,7 @@ import { getWorkbenchState, getWorkbenchSnapshot, setWorkbenchState, onWorkbench
 import { setupProjects } from './projectUi.js';
 import { createProvenance } from '../shared/provenance.js';
 import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch, isPoiQuotaError } from '../shared/poiSearch.js';
-import type { PoiSearchCompleteness } from '../shared/types.js';
+import type { CrossingSegment, CrossingStats, PoiSearchCompleteness } from '../shared/types.js';
 import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
 
@@ -136,6 +136,7 @@ function drawResult(result: AnalysisResult) {
   map.setPois(result.pois);
   map.setGaps(result.gap.patches);
   map.setPlanSites(displayedPlanSites());
+  map.setCrossings(result.crossingSegments ?? []);
 }
 
 function restoreProject(project: ProjectSnapshot) {
@@ -217,7 +218,8 @@ function bindUi() {
     ['ly-rings', 'rings'],
     ['ly-poi', 'poi'],
     ['ly-gap', 'gap'],
-    ['ly-plan', 'plan']
+    ['ly-plan', 'plan'],
+    ['ly-cross', 'cross']
   ];
   for (const [id, key] of layers) {
     $(id).addEventListener('change', (e) => map.toggleLayer(key, (e.target as HTMLInputElement).checked));
@@ -245,6 +247,13 @@ function bindUi() {
     if (e.key === 'Escape') { hideCtxMenu(); document.getElementById('help-modal')?.classList.add('hidden'); }
   });
 
+  // 使用说明弹窗
+  $('btn-help').addEventListener('click', () => document.getElementById('help-modal')?.classList.remove('hidden'));
+  $('help-close').addEventListener('click', () => document.getElementById('help-modal')?.classList.add('hidden'));
+  document.getElementById('help-modal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).classList.add('hidden');
+  });
+
   // 地图形态切换：平面 / 卫星 / 3D
   document.getElementById('map-type-switch')?.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
@@ -252,6 +261,18 @@ function bindUi() {
     document.querySelectorAll('#map-type-switch button').forEach((b) => b.classList.toggle('on', b === btn));
     map.setMapType(btn.dataset.mode as '2d' | 'satellite' | '3d');
   });
+
+  // 两侧栏折叠（宽屏）；状态本地记忆
+  const uiState = JSON.parse(localStorage.getItem('lc-ui') ?? '{}');
+  const applyCollapse = () => {
+    document.body.classList.toggle('sb-off', !!uiState.sb);
+    document.body.classList.toggle('panel-off', !!uiState.panel);
+    $('edge-left').textContent = uiState.sb ? '▶' : '◀';
+    $('edge-right').textContent = uiState.panel ? '◀' : '▶';
+  };
+  $('edge-left').addEventListener('click', () => { uiState.sb = !uiState.sb; localStorage.setItem('lc-ui', JSON.stringify(uiState)); applyCollapse(); });
+  $('edge-right').addEventListener('click', () => { uiState.panel = !uiState.panel; localStorage.setItem('lc-ui', JSON.stringify(uiState)); applyCollapse(); });
+  applyCollapse();
 
   $('btn-print').addEventListener('click', () => {
     if (!state.result) return;
@@ -491,7 +512,7 @@ async function analyze() {
 
     // 7) 过街设施扫描（可选）
     hud.doing(6);
-    let crossings = null;
+    let crossings: { stats: CrossingStats; segments: CrossingSegment[] } | null = null;
     if (!quotaExhausted && (document.getElementById('ly-cross') as HTMLInputElement).checked) {
       crossings = await scanCrossings(chain, state.center, probeM, stepUsage);
     }
@@ -537,7 +558,8 @@ async function analyze() {
       assessmentUnavailableCategories: unavailable,
       incomplete: unavailable.length > 0 || quotaExhausted,
       quotaExhausted,
-      crossings,
+      crossings: crossings?.stats ?? null,
+      crossingSegments: crossings?.segments ?? [],
       steps: stepUsage,
       mock
     };
@@ -619,15 +641,22 @@ async function scanCrossings(
 ) {
   const t0 = performance.now();
   const stats = { scanned: 0, overpass: 0, underpass: 0, crosswalkHint: 0 };
+  const segments: CrossingSegment[] = [];
   for (const b of [30, 90, 150, 210, 270, 330]) {
     const dest = destination(center, b, probeM * 0.6);
     try {
-      const r = await chain.walkingSteps(center, dest);
-      const text = r.value.join(' ');
+      const r = await chain.walkingGeo(center, dest);
       stats.scanned++;
-      stats.overpass += (text.match(/天桥/g) ?? []).length;
-      stats.underpass += (text.match(/地下通道|地道/g) ?? []).length;
-      stats.crosswalkHint += (text.match(/过街|人行横道|路口/g) ?? []).length;
+      for (const s of r.value) {
+        const text = s.text;
+        stats.overpass += (text.match(/天桥/g) ?? []).length;
+        stats.underpass += (text.match(/地下通道|地道/g) ?? []).length;
+        stats.crosswalkHint += (text.match(/过街|人行横道|路口/g) ?? []).length;
+        if (s.path.length >= 2) {
+          const kind = /天桥/.test(text) ? 'overpass' : /地下通道|地道/.test(text) ? 'underpass' : /过街|人行横道|路口/.test(text) ? 'crosswalk' : 'walk';
+          segments.push({ path: s.path, kind });
+        }
+      }
     } catch {
       /* 单方向失败忽略 */
     }
@@ -636,7 +665,7 @@ async function scanCrossings(
     name: '过街设施扫描',
     usage: { channel: chain.activeChannel() ?? 'mock', ms: Math.round(performance.now() - t0), note: `${stats.scanned} 条路段` }
   });
-  return stats;
+  return { stats, segments };
 }
 
 function exportJson() {

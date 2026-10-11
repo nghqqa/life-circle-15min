@@ -25,6 +25,7 @@
           <input id="addr-input" placeholder="输入地址 / 小区名，回车定位" />
           <button id="btn-locate" class="btn ghost" title="地理编码定位">定位</button>
           <button id="btn-pick" class="btn ghost" title="在地图上点击选择中心点">图上选点</button>
+          <button id="btn-help" class="btn ghost" title="使用说明">使用说明</button>
           <span class="divider"></span>
           <label class="lbl" for="persona">人群</label>
           <select id="persona">
@@ -96,15 +97,6 @@
             <h3>数据通道</h3>
             <div id="channel-list" class="channel-list">待分析…</div>
           </section>
-          <section class="card muted">
-            <h3>使用说明</h3>
-            <ol>
-              <li>输入地址定位，或直接在地图上点击选点；</li>
-              <li>选择人群（老年人速度更慢，可达范围更小）；</li>
-              <li>点击「开始体检」，系统基于真实路网计算步行时间场；</li>
-              <li>查看体检报告、国标清单与补点规划建议。</li>
-            </ol>
-          </section>
         </aside>
 
         <div id="map-wrap">
@@ -112,6 +104,8 @@
           <div id="map-type-switch" class="hidden" role="group" aria-label="地图形态">
             <button data-mode="2d" class="on">平面</button><button data-mode="satellite">卫星</button><button data-mode="3d">3D</button>
           </div>
+          <button id="edge-left" class="edge-toggle edge-left" title="折叠左侧栏" aria-label="折叠左侧栏">◀</button>
+          <button id="edge-right" class="edge-toggle edge-right" title="折叠右侧报告栏" aria-label="折叠右侧报告栏">▶</button>
           <div id="ctx-menu" class="hidden">
             <button data-act="center">设为中心点</button>
             <button data-act="analyze">设为中心点并体检</button>
@@ -154,6 +148,23 @@
       </div>
 
       <div id="banner" class="hidden"></div>
+
+      <div id="help-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="modal-box">
+          <div class="modal-head">
+            <div id="help-title" class="modal-title">使用说明</div>
+            <button id="help-close" class="modal-close" aria-label="关闭">✕</button>
+          </div>
+          <ol class="modal-body">
+            <li>输入地址定位，或直接在地图上<b>点击/右键</b>选择中心点；</li>
+            <li>选择人群（老年人速度更慢，可达范围更小）；</li>
+            <li>点击「开始体检」，系统基于真实路网计算步行时间场；</li>
+            <li>查看体检报告、对标清单与补点规划建议；</li>
+            <li>图层开关控制热力面/等时环/POI/盲区/补点/过街扫描的显示；</li>
+            <li>左上角可切换平面、卫星或 3D 地图；两侧栏可用边缘按钮折叠。</li>
+          </ol>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
