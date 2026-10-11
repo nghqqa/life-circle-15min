@@ -1,4 +1,5 @@
 import { TokenBucket } from './ratelimit.js';
+import { countUpstream, overBudget } from './usage.js';
 
 const BASE = 'https://api.map.baidu.com';
 
@@ -49,6 +50,11 @@ export async function callBaidu(
     if (!(await bucket.take())) {
       return { ok: false, httpStatus: 429, body: { status: -1, message: '服务端限流，请稍后重试' }, tookMs: Date.now() - t0 };
     }
+    // F2：预算闸门放在限流之后、真实出网之前——重试各计一次，全部入口（代理/前置采样/批量）共用
+    if (overBudget()) {
+      return { ok: false, httpStatus: 429, body: { status: -1, message: '本地每日预算触顶，已停止上游调用（可调高 BAIDU_LOCAL_DAILY_BUDGET）' }, tookMs: Date.now() - t0 };
+    }
+    countUpstream(path);
     try {
       const res = await fetchWithTimeout(url.toString(), 8000);
       if (res.status >= 500) throw new Error(`upstream ${res.status}`);

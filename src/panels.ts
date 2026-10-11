@@ -501,7 +501,8 @@ function streetHtml(): string {
     </div>
     <div class="rpt-sub" id="street-scope-note" style="margin-top:6px">街道体检：半径 ≤3km、≤16 个采样点。切到「城区试点」可扩大到 8km / 30 点，结果将按街道分组排名（约 3-6 分钟，企业配额）。</div>
   </div>
-  <div id="street-status"></div>`;
+  <div id="street-status"></div>
+  <div id="street-usage" class="rpt-sub" style="margin-top:8px"></div>`;
 }
 
 function wireStreet() {
@@ -557,6 +558,20 @@ function wireStreet() {
   updateStreetStatus();
 }
 
+/** №13 调用预算面板：本地进程计数（非平台账户余额），预算与命中一目了然 */
+async function refreshUsageLine() {
+  const el = document.getElementById('street-usage');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/usage');
+    const data = await res.json();
+    const u = data.usage;
+    if (!u) return;
+    const budget = u.dailyBudget > 0 ? `${u.requests.total}/${u.dailyBudget}` : `${u.requests.total}（未设上限）`;
+    el.textContent = `今日上游请求 ${budget}（检索 ${u.requests.place} · 算路 ${u.requests.route} · 编码 ${u.requests.geo}）· 缓存命中 ${u.cacheHits} · 本地进程计数，非平台账户余额${u.overBudget ? ' · 已触顶暂停' : ''}`;
+  } catch { /* 演示模式/离线环境无此端点 */ }
+}
+
 function startPolling() {
   if (streetPollTimer) clearInterval(streetPollTimer);
   streetPollTimer = setInterval(async () => {
@@ -565,6 +580,7 @@ function startPolling() {
       const res = await fetch(`/api/batch/status/${streetJobId}`);
       const data = await res.json();
       if (data.status !== 0) return;
+      void refreshUsageLine();
       streetLastSnapshot = {
         status: data.job.status,
         done: data.job.done,
@@ -616,7 +632,8 @@ function updateStreetStatus() {
     return;
   }
   if (s.status === 'error') {
-    el.innerHTML = `<div class="rpt-summary"><span class="sum-label" style="color:var(--bad)">失败</span>${escapeHtml(s.error ?? '未知错误')}</div>`;
+    // 预算触顶/失败也保留已完成社区结果（可见、可导出），错误文本说明原因
+    el.innerHTML = `<div class="rpt-summary"><span class="sum-label" style="color:var(--bad)">失败</span>${escapeHtml(s.error ?? '未知错误')}</div>${s.communities?.length ? communityTable(s.communities) : ''}`;
     return;
   }
   const sum = s.summary ?? {};

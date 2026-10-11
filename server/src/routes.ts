@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
+import { countCacheHit, usageSnapshot } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
 import { startStreetBatch, getJob, cancelJob, sweepJobs } from './batch.js';
@@ -43,6 +44,7 @@ export function createApiRouter(cfg: ServerConfig): Router {
   function sendCached(res: Response, cache: TtlCache<any>, key: string, producer: () => Promise<any>) {
     const hit = cache.get(key);
     if (hit) {
+      countCacheHit();
       res.set('X-Proxy-Cache', 'HIT');
       res.set('X-Data-Collected-At', hit.collectedAt);
       res.json(hit.body);
@@ -168,6 +170,11 @@ export function createApiRouter(cfg: ServerConfig): Router {
     sendCached(res, caches.route, key, () =>
       callBaidu('/direction/v2/walking', { origin, destination }, buckets.route, cfg.akServer)
     );
+  });
+
+  // №13 调用预算面板：本地进程计数（非平台账户余额），每日预算触顶自动暂停上游调用
+  router.get('/usage', (_req, res) => {
+    res.json({ status: 0, usage: usageSnapshot() });
   });
 
   router.get('/stats', (_req, res) => {

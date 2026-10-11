@@ -137,6 +137,8 @@ test('代理分页截断及配额耗尽可见，后续关键词和过街扫描�
       queries.push(`${kw}:${n}`);
       body = kw === '诊所' ? { status: 302, message: '测试配额耗尽' } : { status: 0, total: 100,
         results: Array.from({ length: 20 }, (_, i) => ({ uid: `${n}-${i}`, name: `医院${n}-${i}`, location: { lat: 28.505 + (n * 20 + i) * 0.0001, lng: 118.02 } })) };
+    } else if (url.pathname === '/api/usage') {
+      body = { status: 0, usage: { date: '2026-10-12', requests: { place: 0, route: 0, geo: 0, total: 0 }, cacheHits: 0, dailyBudget: 2000, overBudget: false, note: 'local-process-counter' } };
     } else { crossings++; body = { status: 0, result: { routes: [] } }; }
     await route.fulfill({ json: body });
   });
