@@ -17,7 +17,10 @@
   Gitee ：https://gitee.com/nghqqa/life-circle-15min
   · MIT 开源协议；README 含快速开始指引
   · 自动化测试 38 项全部通过；类型检查与前后端构建通过（GitHub Actions CI）
-  · 代码版本：4f981b2（与介绍文档标注版本一致）
+  · 参赛版本：tag「submission-2026」（业务代码 4f981b2，与介绍文档标注一致）；
+    仓库在提交后仍按路线图持续开发，复现与评审请以该 tag 为准：
+    git clone https://github.com/nghqqa/life-circle-15min.git
+    cd life-circle-15min && git checkout submission-2026
 
 三、演示复现指引（评审方快速跑通）
   环境：Node.js ≥ 20
