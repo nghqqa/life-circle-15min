@@ -3,7 +3,15 @@ import { PERSONA_MAP } from '../shared/config.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
 import { comparisonBaseline, type PlanScenarios, type PlanScenario } from '../shared/comparison.js';
 
-export interface WorkbenchSnapshot { acceptedSites: PlanSite[]; rejectedSites: PlanSite[]; scenarios?: PlanScenarios }
+export interface WorkbenchSnapshot {
+  acceptedSites: PlanSite[]; rejectedSites: PlanSite[]; scenarios?: PlanScenarios;
+  /** №7 自定义候选落点（含手动添加的补点候选） */
+  customCandidates?: { latLng: LatLng; category: PlanSite['category'] }[];
+  /** №7 禁建区（圆心 + 半径米） */
+  noGoZones?: { center: LatLng; radiusM: number }[];
+  /** №8 预算约束（成本为规划假设，非工程概算） */
+  budget?: { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number };
+}
 export interface ProjectSnapshot {
   format: 'life-circle-project'; schemaVersion: 1;
   id: string; name: string; createdAt: string; updatedAt: string;
@@ -154,6 +162,26 @@ function snapshot(v: unknown): ProjectSnapshot {
   const w = obj(o.workbench, 'workbench');
   const analysis = result(o.result);
   const workbench: WorkbenchSnapshot = { acceptedSites: arr(w.acceptedSites, 'workbench.acceptedSites', site, 100), rejectedSites: arr(w.rejectedSites, 'workbench.rejectedSites', site, 100) };
+    if (w.customCandidates !== undefined) {
+      workbench.customCandidates = arr(w.customCandidates, 'workbench.customCandidates', (x, p) => {
+        const o = obj(x, p);
+        return { latLng: point(o.latLng, `${p}.latLng`), category: cat(o.category, `${p}.category`) };
+      }, 100);
+    }
+    if (w.noGoZones !== undefined) {
+      workbench.noGoZones = arr(w.noGoZones, 'workbench.noGoZones', (x, p) => {
+        const o = obj(x, p);
+        return { center: point(o.center, `${p}.center`), radiusM: num(o.radiusM, `${p}.radiusM`, 0, 10000) };
+      }, 50);
+    }
+    if (w.budget !== undefined) {
+      const bo = obj(w.budget, 'workbench.budget');
+      const b: WorkbenchSnapshot['budget'] = {};
+      if (bo.maxSites !== undefined) b.maxSites = integer(bo.maxSites, 'workbench.budget.maxSites', 0, 100);
+      if (bo.costPerSiteWan !== undefined) b.costPerSiteWan = num(bo.costPerSiteWan, 'workbench.budget.costPerSiteWan', 0, 1e6);
+      if (bo.totalBudgetWan !== undefined) b.totalBudgetWan = num(bo.totalBudgetWan, 'workbench.budget.totalBudgetWan', 0, 1e7);
+      workbench.budget = b;
+    }
   if (w.scenarios !== undefined) {
     const saved = obj(w.scenarios, 'workbench.scenarios');
     if (Object.keys(saved).some(k => k !== 'A' && k !== 'B')) bad('方案只支持 A / B');

@@ -19,16 +19,29 @@ let currentTab = 'report';
 let acceptedSites: PlanSite[] = [];
 let rejectedSites: PlanSite[] = [];
 let scenarios: PlanScenarios = {};
+// №7/8 规划编辑状态：自定义候选、禁建区与预算约束（随项目快照保存）
+let customCandidates: { latLng: LatLng; category: PlanSite['category'] }[] = [];
+let noGoZones: { center: LatLng; radiusM: number }[] = [];
+let budget: { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } = {};
 let workbenchListener: (() => void) | null = null;
 
 export function onWorkbenchChange(listener: () => void) { workbenchListener = listener; }
 export function getWorkbenchSnapshot(): WorkbenchSnapshot {
-  return structuredClone({ acceptedSites, rejectedSites, ...(Object.keys(scenarios).length ? { scenarios } : {}) });
+  return structuredClone({
+    acceptedSites, rejectedSites,
+    ...(Object.keys(scenarios).length ? { scenarios } : {}),
+    ...(customCandidates.length ? { customCandidates } : {}),
+    ...(noGoZones.length ? { noGoZones } : {}),
+    ...(Object.keys(budget).length ? { budget } : {})
+  });
 }
 export function setWorkbenchState(snapshot: WorkbenchSnapshot) {
   acceptedSites = structuredClone(snapshot.acceptedSites);
   rejectedSites = structuredClone(snapshot.rejectedSites);
   scenarios = structuredClone(snapshot.scenarios ?? {});
+  customCandidates = structuredClone(snapshot.customCandidates ?? []);
+  noGoZones = structuredClone(snapshot.noGoZones ?? []);
+  budget = structuredClone(snapshot.budget ?? {});
 }
 export function displayedPlanSites(): PlanSite[] {
   return currentResult ? [...acceptedSites, ...currentSites(currentResult)] : [];
@@ -54,6 +67,9 @@ export function setResult(r: AnalysisResult | null) {
     acceptedSites = [];
     rejectedSites = [];
     scenarios = {};
+    customCandidates = [];
+    noGoZones = [];
+    budget = {};
   }
   currentResult = r;
 }
@@ -307,7 +323,8 @@ function planHtml(r: AnalysisResult): string {
   <div class="rpt-summary">
     <span class="sum-label">工作台</span>规划引擎基于贪心最大覆盖给出补点建议。<b>采纳</b>一条建议后，
     其服务盘即刻写入覆盖状态并重新求解剩余建议；<b>跳过</b>则不再在该位置 400m 内重复推荐。
-  </div>`;
+  </div>
+  ${planEditHtml(r)}`;
   if (!r.planSites.length && !acceptedSites.length) {
     return head + `<div class="empty-tip">${r.incomplete ? '检索数据不完整，当前没有可可靠推荐的补点；请核验数据后再规划。' : '当前暂无补点建议，请结合覆盖率与住宅样本判断。'}</div>`;
   }
@@ -365,8 +382,32 @@ function siteId(s: PlanSite): string {
 }
 
 /** 依据已采纳/已跳过状态重算当前建议 */
+/** F3：预算按整个当前方案计——剩余数量/剩余预算 = 上限 − 已采纳占用 */
+function remainingBudget(): { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } {
+  const out: { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } = {};
+  if (budget.maxSites !== undefined) out.maxSites = Math.max(0, budget.maxSites - acceptedSites.length);
+  if (budget.costPerSiteWan !== undefined) out.costPerSiteWan = budget.costPerSiteWan;
+  if (budget.totalBudgetWan !== undefined && budget.costPerSiteWan !== undefined && budget.costPerSiteWan > 0) {
+    out.totalBudgetWan = Math.max(0, budget.totalBudgetWan - acceptedSites.length * budget.costPerSiteWan);
+  }
+  return out;
+}
+
+/** F3：方案是否已超出预算（预算缩减到低于已采纳数量时提示，不自动撤销） */
+function budgetExceeded(): boolean {
+  if (budget.maxSites !== undefined && acceptedSites.length > budget.maxSites) return true;
+  if (budget.totalBudgetWan !== undefined && budget.costPerSiteWan !== undefined && budget.costPerSiteWan > 0
+    && acceptedSites.length * budget.costPerSiteWan > budget.totalBudgetWan) return true;
+  return false;
+}
+
 function currentSites(r: AnalysisResult): PlanSite[] {
   if (!sameRules(r)) return [];
+  const rem = remainingBudget();
+  const countExhausted = rem.maxSites !== undefined && rem.maxSites <= 0;
+  const costExhausted = rem.totalBudgetWan !== undefined && rem.costPerSiteWan !== undefined && rem.costPerSiteWan > 0 && rem.totalBudgetWan <= 0
+    && (budget.totalBudgetWan !== undefined);
+  if (countExhausted || (costExhausted && acceptedSites.length > 0)) return [];
   const cov: Record<string, Uint8Array> = {};
   for (const k of Object.keys(r.gap.coveredMasks)) cov[k] = Uint8Array.from(r.gap.coveredMasks[k]);
   for (const s of acceptedSites) applySiteCoverage(cov, s.category, s.latLng, r.field);
@@ -377,7 +418,10 @@ function currentSites(r: AnalysisResult): PlanSite[] {
     PERSONA_MAP[r.persona].speed,
     {
       topK: THRESHOLDS.planTopK + rejectedSites.length,
-      unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? []
+      unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? [],
+      customCandidates,
+      noGoZones,
+      budget: remainingBudget()
     }
   );
   return sites.filter((s) =>
@@ -385,7 +429,161 @@ function currentSites(r: AnalysisResult): PlanSite[] {
   );
 }
 
+/** №7/8 可编辑规划：自定义候选、禁建区与预算约束（成本为讨论假设，非工程概算） */
+function planEditHtml(r: AnalysisResult): string {
+  const editable = sameRules(r);
+  const core = ['market', 'pharmacy', 'primarySchool'] as const;
+  const catName = (c: string) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c;
+  const candRows = customCandidates.map((c, i) => `<tr>
+      <td>${catName(c.category)}</td><td class="num">${c.latLng.lat.toFixed(5)}, ${c.latLng.lng.toFixed(5)}</td>
+      <td><button class="btn ghost" data-planact="adopt-custom" data-idx="${i}" ${editable ? '' : 'disabled'}>采纳</button>
+      <button class="btn ghost" data-planact="remove-custom" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
+  const zoneRows = noGoZones.map((z, i) => `<tr><td>半径 ${z.radiusM}m</td><td class="num">${z.center.lat.toFixed(5)}, ${z.center.lng.toFixed(5)}</td>
+      <td><button class="btn ghost" data-planact="remove-zone" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
+  return `${budgetExceeded() ? `<div class="rpt-summary" style="color:var(--warn)"><span class="sum-label">预算超限</span>已采纳 ${acceptedSites.length} 处，超出当前预算/数量上限（${budget.maxSites ?? '-'} 处上限${budget.totalBudgetWan !== undefined ? `，预算 ${budget.totalBudgetWan} 万` : ''}）。请撤销已采纳点或调整约束。</div>` : ''}<div class="rpt-summary"><span class="sum-label">规划编辑</span>
+    自定义候选与网格候选同场竞价；落入禁建区的候选被排除。成本为规划讨论假设，非工程概算；
+    标注为<b>规划候选点</b>，不代表已具备建设条件的地块。</div>
+  <table class="tbl"><thead><tr><th>类别</th><th>纬度, 经度</th><th>操作</th></tr></thead>
+  <tbody>${candRows || '<tr><td colspan="3">暂无自定义候选</td></tr>'}</tbody></table>
+  <div class="plan-edit-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+    <select id="pe-cat" class="input">${core.map(c => `<option value="${c}">${catName(c)}</option>`).join('')}</select>
+    <input id="pe-lat" class="input" placeholder="纬度" style="width:110px" ${editable ? '' : 'disabled'}>
+    <input id="pe-lng" class="input" placeholder="经度" style="width:110px" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-add" ${editable ? '' : 'disabled'}>添加候选点</button>
+    <input id="pe-zone" class="input" placeholder="禁建区半径 m" style="width:110px" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-zone-add" ${editable ? '' : 'disabled'}>以分析中心添加禁建区</button>
+  </div>
+  <table class="tbl"><thead><tr><th>禁建区</th><th>圆心</th><th>操作</th></tr></thead>
+  <tbody>${zoneRows || '<tr><td colspan="3">暂无禁建区</td></tr>'}</tbody></table>
+  <div class="plan-edit-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+    <input id="pe-max" class="input" placeholder="最大补点数" style="width:110px" value="${budget.maxSites ?? ''}" ${editable ? '' : 'disabled'}>
+    <input id="pe-cost" class="input" placeholder="单点成本(万)" style="width:110px" value="${budget.costPerSiteWan ?? ''}" ${editable ? '' : 'disabled'}>
+    <input id="pe-total" class="input" placeholder="总预算(万)" style="width:110px" value="${budget.totalBudgetWan ?? ''}" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-budget-apply" ${editable ? '' : 'disabled'}>应用预算约束</button>
+  </div>`;
+}
+
+function wirePlanEdit() {
+  const body = document.getElementById('panel-body')!;
+  const refresh = () => {
+    if (currentResult && map.ready) map.setPlanSites([...acceptedSites, ...currentSites(currentResult)]);
+    render();
+    workbenchListener?.();
+  };
+  const num = (id: string) => {
+    const v = Number((document.getElementById(id) as HTMLInputElement)?.value);
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  };
+  body.querySelectorAll('[data-planact]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!currentResult || !sameRules(currentResult)) return;
+      const act = (el as HTMLElement).dataset.planact;
+      const idx = Number((el as HTMLElement).dataset.idx);
+      if (act === 'remove-custom') { customCandidates.splice(idx, 1); refresh(); }
+      else if (act === 'remove-zone') { noGoZones.splice(idx, 1); refresh(); }
+      else if (act === 'adopt-custom') {
+        const cc = customCandidates[idx];
+        if (!cc || !currentResult) return;
+        // F4：禁建区内的候选拒绝采纳
+        const zone = noGoZones.find((z) => localDistM(cc.latLng.lat, cc.latLng.lng, z.center.lat, z.center.lng) <= z.radiusM);
+        if (zone) {
+          banner(`该候选位于禁建区内（圆心 ${zone.center.lat.toFixed(4)}, ${zone.center.lng.toFixed(4)} 半径 ${zone.radiusM}m），已拒绝采纳。`);
+          return;
+        }
+        // F5：未知/不可评估类别不能推断覆盖收益
+        const unavailable = currentResult.assessmentUnavailableCategories ?? currentResult.failedCategories ?? [];
+        if (unavailable.includes(cc.category)) {
+          banner(`「${CATEGORY_MAP[cc.category as keyof typeof CATEGORY_MAP]?.name ?? cc.category}」检索不完整（未知），不能据此推断覆盖收益，已拒绝采纳。`);
+          return;
+        }
+        // F3：采纳前检查剩余预算
+        const rem = remainingBudget();
+        if (rem.maxSites !== undefined && rem.maxSites <= 0) {
+          banner(`已达最大补点数上限（${budget.maxSites} 处）。要继续采纳请先撤销已采纳点或调高上限。`);
+          return;
+        }
+        if (rem.totalBudgetWan !== undefined && rem.costPerSiteWan !== undefined && rem.costPerSiteWan > 0 && rem.totalBudgetWan < rem.costPerSiteWan) {
+          banner(`已超出总预算（${budget.totalBudgetWan} 万 / 单点 ${budget.costPerSiteWan} 万）。要继续采纳请先撤销已采纳点或调整预算。`);
+          return;
+        }
+        const cat = cc.category;
+        const cov: Record<string, Uint8Array> = {};
+        for (const k of Object.keys(currentResult.gap.coveredMasks)) cov[k] = Uint8Array.from(currentResult.gap.coveredMasks[k]);
+        for (const s of acceptedSites) applySiteCoverage(cov, s.category, s.latLng, currentResult.field);
+        const w = currentResult.gap.weightGrid;
+        const beforeMask = Uint8Array.from(cov[cat]);
+        let beforeW = 0;
+        for (let k = 0; k < w.length; k++) if (w[k] > 0 && cov[cat][k] === 1) beforeW += w[k];
+        applySiteCoverage(cov, cat, cc.latLng, currentResult.field);
+        let afterW = 0, newlyCells = 0;
+        for (let k = 0; k < w.length; k++) {
+          if (w[k] <= 0 || cov[cat][k] !== 1) continue;
+          afterW += w[k];
+          if (beforeMask[k] !== 1) newlyCells++;
+        }
+        const total = currentResult.gap.totalWeight;
+        const pct = (x: number) => (total > 0 ? x / total : 1) * 100;
+        acceptedSites.push({
+          rank: acceptedSites.length + 1, latLng: cc.latLng, category: cat,
+          coveredCells: newlyCells, coveredWeight: afterW - beforeW,
+          beforePct: Math.round(pct(beforeW) * 10) / 10, afterPct: Math.round(pct(afterW) * 10) / 10,
+          estWalkMin: Math.round((THRESHOLDS.coreRadiusM * 1.25 / PERSONA_MAP[currentResult.persona].speed) * 10) / 10,
+          rationale: `自定义候选落点：采纳后「${CATEGORY_MAP[cat as keyof typeof CATEGORY_MAP].name}」居住覆盖率 ${Math.round(pct(beforeW))}% → ${Math.round(pct(afterW))}%`
+        });
+        customCandidates.splice(idx, 1);
+        refresh();
+      }
+    });
+  });
+  document.getElementById('pe-add')?.addEventListener('click', () => {
+    const lat = Number((document.getElementById('pe-lat') as HTMLInputElement).value);
+    const lng = Number((document.getElementById('pe-lng') as HTMLInputElement).value);
+    const cat = (document.getElementById('pe-cat') as HTMLSelectElement).value as PlanSite['category'];
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -85 || lat > 85 || lng < -180 || lng > 180) {
+      banner('请输入有效的纬度（-85~85）与经度（-180~180）。'); return;
+    }
+    if (!sameRules(currentResult!)) { banner('此项目使用历史规则，仅可查看。'); return; }
+    customCandidates.push({ latLng: { lat, lng }, category: cat });
+    refresh();
+  });
+  document.getElementById('pe-zone-add')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const radius = num('pe-zone');
+    if (!radius) { banner('请输入禁建区半径（米）。'); return; }
+    noGoZones.push({ center: currentResult.center, radiusM: radius });
+    const centerNow = currentResult.center;
+    const conflicts = acceptedSites.filter((s) => localDistM(s.latLng.lat, s.latLng.lng, centerNow.lat, centerNow.lng) <= radius);
+    if (conflicts.length) banner(`注意：新禁建区与 ${conflicts.length} 个已采纳点重叠——二者在方案讨论中属于冲突项，请人工裁决（系统不自动撤销）。`, 'warn', 10000);
+    refresh();
+  });
+  document.getElementById('pe-budget-apply')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    // F9：与项目快照校验共用边界（整数 0-100；成本/预算非负且不超上限）；空输入=不设置
+    const readNum = (id: string, max: number, integer: boolean): { ok: true; v?: number } | { ok: false } => {
+      const raw = (document.getElementById(id) as HTMLInputElement)?.value.trim() ?? '';
+      if (raw === '') return { ok: true };
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > max || (integer && !Number.isInteger(v))) return { ok: false };
+      return { ok: true, v };
+    };
+    const maxR = readNum('pe-max', 100, true);
+    const costR = readNum('pe-cost', 1_000_000, false);
+    const totalR = readNum('pe-total', 10_000_000, false);
+    if (!maxR.ok || !costR.ok || !totalR.ok) {
+      banner('预算输入无效：最大补点数需为 0–100 整数，成本与预算需为非负数且不超上限。本次未修改约束。');
+      return;
+    }
+    budget = {};
+    if (maxR.v !== undefined) budget.maxSites = maxR.v;
+    if (costR.v !== undefined) budget.costPerSiteWan = costR.v;
+    if (totalR.v !== undefined) budget.totalBudgetWan = totalR.v;
+    if (!Object.keys(budget).length) banner('预算约束已清空。', 'info');
+    refresh();
+  });
+}
+
 function wirePlanActions() {
+  wirePlanEdit();
   const body = document.getElementById('panel-body')!;
   const refresh = () => {
     if (currentResult && map.ready) {

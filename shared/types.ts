@@ -207,6 +207,11 @@ export interface ChecklistItem {
   count: number;
 }
 
+export interface CustomCandidate { latLng: LatLng; category: PlanSite['category'] }
+export interface NoGoZone { center: LatLng; radiusM: number }
+/** №8 预算约束：最大补点数与成本假设（万元）。成本为规划讨论假设，非工程概算 */
+export interface BudgetConstraint { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number }
+
 export interface PlanSite {
   rank: number;
   latLng: LatLng;
