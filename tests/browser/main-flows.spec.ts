@@ -426,4 +426,25 @@ test('规划编辑审查修复：禁建区拦截采纳、预算扣减与表单�
   const final = await store(page);
   const p3 = final.projects.find((p: any) => p.id === saved.recentId);
   expect(p3.workbench.budget?.maxSites).toBe(1);
+test('历史趋势：同城多期对照，规则差异期标注不可直接比', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page); // 第一期（当前规则指纹）
+  const mutated = comparisonFixture();
+  mutated.generatedAt = '2026-10-12T00:00:00.000Z';
+  mutated.score.total = 30;
+  mutated.provenance = { ...structuredClone(mutated.provenance!), ruleFingerprint: 'deadbeef' };
+  await page.locator('#project-file').setInputFiles({ name: 'p2.json', mimeType: 'application/json', buffer: Buffer.from(serializeProject(createProject(mutated, { acceptedSites: [], rejectedSites: [] }, '第二期·规则调整后'))) });
+  await expect(page.locator('#project-status')).toContainText('已导入');
+  const third = comparisonFixture();
+  third.generatedAt = '2026-10-13T00:00:00.000Z';
+  await page.locator('#project-file').setInputFiles({ name: 'p3.json', mimeType: 'application/json', buffer: Buffer.from(serializeProject(createProject(third, { acceptedSites: [], rejectedSites: [] }, '第三期·同口径复测'))) });
+  await expect(page.locator('#project-status')).toContainText('已导入');
+  await page.locator('[data-tab="compare"]').click();
+  await expect(page.locator('#panel-body')).toContainText('历史趋势');
+  await expect(page.locator('#panel-body')).toContainText('deadbeef');      // 异规则期被点名
+  await expect(page.locator('#trend-table tbody tr')).toHaveCount(3); // 三期全部列出
+  await expect(page.locator('#panel-body')).toContainText('同口径 ✓');      // 两期同口径标注
+  await expect(page.locator('#panel-body')).toContainText('规则 deadbeef'); // 异规则期点名
+  await expect(page.locator('#panel-body')).toContainText('不能仅凭分数上升');
+>>>>>>> feat/trend
 });
