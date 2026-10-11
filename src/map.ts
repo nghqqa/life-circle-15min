@@ -209,7 +209,19 @@ export class MapView {
         });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
+<<<<<<< HEAD
             `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/><button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">步行路线核验</button> <button class="btn ghost" data-hours-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">营业时段</button></div>`,
+=======
+            `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/>
+            <button class="btn ghost" data-corr-undo-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 6px">撤销最新标注</button>
+            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+              <select data-corr-status="${escapeHtml(p.uid)}" style="font-size:12px;height:24px">
+                <option>已核验</option><option>停业</option><option>迁移</option><option>分类错误</option>
+              </select>
+              <input data-corr-note="${escapeHtml(p.uid)}" placeholder="说明(可空)" style="font-size:12px;width:90px;height:24px">
+              <button class="btn ghost" data-corr-save="${escapeHtml(p.uid)}" data-corr-name="${escapeHtml(p.name)}" style="font-size:12px;padding:2px 6px">标注</button>
+            </div></div>`,
+>>>>>>> feat/corrections
             { width: 240 }
           );
           map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
