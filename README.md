@@ -9,6 +9,9 @@
   <img src="https://img.shields.io/badge/%E7%99%BE%E5%BA%A6%E5%9C%B0%E5%9B%BE-GL%20JS%20API%20%2B%20Web%20API-2932e1" alt="百度地图 GL JS API + Web API">
 </p>
 
+> [!IMPORTANT]
+> **新版前端已迁移至 [wookat/life-circle-web](https://github.com/wookat/life-circle-web)**：React + Ant Design 全量重构（组件库、图标、布局、自适应统一）。本仓库保留为稳定 vanilla TS 演示版，功能管线一致。
+
 ## 本地项目与数据完整性（新增）
 
 - **保留工作进度**：体检完成和规划选择变化后自动保存到当前浏览器；侧栏可打开、重命名、另存、删除和导入／导出完整项目，刷新后恢复最近项目。
