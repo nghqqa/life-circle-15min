@@ -39,6 +39,7 @@ import { sampleTimeNearest } from '../shared/timefield.js';
 import { getCachedRoute, setCachedRoute, routeCacheKey } from './routeCache.js';
 import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
+import { parseOpenHours } from './openHours.js';
 
 // ---------- 全局状态 ----------
 
@@ -221,6 +222,29 @@ function bindUi() {
   document.body.addEventListener('click', (event) => {
     const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-route-uid]') : null;
     if (el?.dataset.routeUid) void verifyRouteToPoi(el.dataset.routeUid);
+  });
+
+  // №16 设施「营业时段」核验：按需查一次 POI 详情，商户申报缺失时如实报「未知」
+  document.body.addEventListener('click', (event) => {
+    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-hours-uid]') : null;
+    if (!el?.dataset.hoursUid) return;
+    const uid = el.dataset.hoursUid;
+    const poi = state.result?.pois.find((p) => p.uid === uid);
+    if (!state.hasServerAk) {
+      banner('演示模式无营业时间数据：状态未知，未知 ≠ 全天营业。');
+      return;
+    }
+    banner('正在查询商户申报的营业时间…', 'info', 6000);
+    fetch(`/api/baidu/place/v2/detail?uid=${encodeURIComponent(uid)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        const raw: string | undefined = data?.result?.detail_info?.open_time ?? data?.result?.open_time;
+        const parsed = parseOpenHours(raw);
+        const name = poi?.name ?? '该设施';
+        const label = parsed.status === 'open' ? '营业中' : parsed.status === 'closed' ? '当前未营业' : '营业时间未知';
+        banner(`${name}：${label}（${parsed.note}）`, parsed.status === 'unknown' ? 'warn' : 'info', 10000);
+      })
+      .catch(() => banner('营业时段查询失败：商户申报数据不可用，状态保持未知。'));
   });
 
   $('btn-analyze').addEventListener('click', () => analyze().catch((e) => {

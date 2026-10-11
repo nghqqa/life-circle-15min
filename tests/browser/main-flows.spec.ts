@@ -349,7 +349,6 @@ test('路线核验：真实通道距离与时间场并列，重复核验命中�
   await expect(page.locator('#banner')).toContainText('缓存');
   await expect(page.locator('#banner')).toContainText('1234m');
 });
-||||||| 8695f39
 
 test('规划编辑：自定义候选采纳进方案，预算约束随项目保存', async ({ page }) => {
   await page.goto('/');
@@ -410,4 +409,18 @@ test('规划编辑审查修复：禁建区拦截采纳、预算扣减与表单�
   const final = await store(page);
   const p3 = final.projects.find((p: any) => p.id === saved.recentId);
   expect(p3.workbench.budget?.maxSites).toBe(1);
+});
+test('营业时段：演示模式如实报未知，不默认全天营业', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  const uid = comparisonFixture().pois.find(p => p.category !== 'residential')!.uid;
+  await page.evaluate(uid => {
+    const btn = document.createElement('button');
+    btn.setAttribute('data-hours-uid', uid);
+    document.body.appendChild(btn);
+    btn.click();
+    btn.remove();
+  }, uid);
+  await expect(page.locator('#banner')).toContainText('未知');
+  await expect(page.locator('#banner')).toContainText('全天营业');
 });
