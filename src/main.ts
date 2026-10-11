@@ -231,6 +231,25 @@ function bindUi() {
     b.addEventListener('click', () => switchTab((b as HTMLElement).dataset.tab!));
   });
 
+  // 使用说明弹窗
+  $('btn-help').addEventListener('click', () => document.getElementById('help-modal')?.classList.remove('hidden'));
+  $('help-close').addEventListener('click', () => document.getElementById('help-modal')?.classList.add('hidden'));
+  document.getElementById('help-modal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).classList.add('hidden');
+  });
+
+  // 两侧栏折叠（宽屏）；状态本地记忆
+  const uiState = JSON.parse(localStorage.getItem('lc-ui') ?? '{}');
+  const applyCollapse = () => {
+    document.body.classList.toggle('sb-off', !!uiState.sb);
+    document.body.classList.toggle('panel-off', !!uiState.panel);
+    $('edge-left').textContent = uiState.sb ? '▶' : '◀';
+    $('edge-right').textContent = uiState.panel ? '◀' : '▶';
+  };
+  $('edge-left').addEventListener('click', () => { uiState.sb = !uiState.sb; localStorage.setItem('lc-ui', JSON.stringify(uiState)); applyCollapse(); });
+  $('edge-right').addEventListener('click', () => { uiState.panel = !uiState.panel; localStorage.setItem('lc-ui', JSON.stringify(uiState)); applyCollapse(); });
+  applyCollapse();
+
   $('btn-print').addEventListener('click', () => {
     if (!state.result) return;
     try {
