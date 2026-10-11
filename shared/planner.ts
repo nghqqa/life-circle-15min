@@ -111,6 +111,8 @@ export function planFacilitiesFromCoverage(
   const customKeys = new Set<string>();
   for (const cc of opts.customCandidates ?? []) {
     if (!CORE_CATEGORIES.includes(cc.category)) continue;
+    // F5：未知/不可评估类别与网格候选同规则——不得据未知掩码推断缺失与收益
+    if (unknown.has(cc.category)) continue;
     if ((opts.noGoZones ?? []).some((z) => localDistM(cc.latLng.lat, cc.latLng.lng, z.center.lat, z.center.lng) <= z.radiusM)) continue;
     const k = snapToCell(field, n, cc.latLng);
     const key = `${k}:${cc.category}`;

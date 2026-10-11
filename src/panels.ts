@@ -382,8 +382,32 @@ function siteId(s: PlanSite): string {
 }
 
 /** 依据已采纳/已跳过状态重算当前建议 */
+/** F3：预算按整个当前方案计——剩余数量/剩余预算 = 上限 − 已采纳占用 */
+function remainingBudget(): { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } {
+  const out: { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } = {};
+  if (budget.maxSites !== undefined) out.maxSites = Math.max(0, budget.maxSites - acceptedSites.length);
+  if (budget.costPerSiteWan !== undefined) out.costPerSiteWan = budget.costPerSiteWan;
+  if (budget.totalBudgetWan !== undefined && budget.costPerSiteWan !== undefined && budget.costPerSiteWan > 0) {
+    out.totalBudgetWan = Math.max(0, budget.totalBudgetWan - acceptedSites.length * budget.costPerSiteWan);
+  }
+  return out;
+}
+
+/** F3：方案是否已超出预算（预算缩减到低于已采纳数量时提示，不自动撤销） */
+function budgetExceeded(): boolean {
+  if (budget.maxSites !== undefined && acceptedSites.length > budget.maxSites) return true;
+  if (budget.totalBudgetWan !== undefined && budget.costPerSiteWan !== undefined && budget.costPerSiteWan > 0
+    && acceptedSites.length * budget.costPerSiteWan > budget.totalBudgetWan) return true;
+  return false;
+}
+
 function currentSites(r: AnalysisResult): PlanSite[] {
   if (!sameRules(r)) return [];
+  const rem = remainingBudget();
+  const countExhausted = rem.maxSites !== undefined && rem.maxSites <= 0;
+  const costExhausted = rem.totalBudgetWan !== undefined && rem.costPerSiteWan !== undefined && rem.costPerSiteWan > 0 && rem.totalBudgetWan <= 0
+    && (budget.totalBudgetWan !== undefined);
+  if (countExhausted || (costExhausted && acceptedSites.length > 0)) return [];
   const cov: Record<string, Uint8Array> = {};
   for (const k of Object.keys(r.gap.coveredMasks)) cov[k] = Uint8Array.from(r.gap.coveredMasks[k]);
   for (const s of acceptedSites) applySiteCoverage(cov, s.category, s.latLng, r.field);
@@ -397,7 +421,7 @@ function currentSites(r: AnalysisResult): PlanSite[] {
       unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? [],
       customCandidates,
       noGoZones,
-      budget
+      budget: remainingBudget()
     }
   );
   return sites.filter((s) =>
@@ -416,7 +440,7 @@ function planEditHtml(r: AnalysisResult): string {
       <button class="btn ghost" data-planact="remove-custom" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
   const zoneRows = noGoZones.map((z, i) => `<tr><td>半径 ${z.radiusM}m</td><td class="num">${z.center.lat.toFixed(5)}, ${z.center.lng.toFixed(5)}</td>
       <td><button class="btn ghost" data-planact="remove-zone" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
-  return `<div class="rpt-summary"><span class="sum-label">规划编辑</span>
+  return `${budgetExceeded() ? `<div class="rpt-summary" style="color:var(--warn)"><span class="sum-label">预算超限</span>已采纳 ${acceptedSites.length} 处，超出当前预算/数量上限（${budget.maxSites ?? '-'} 处上限${budget.totalBudgetWan !== undefined ? `，预算 ${budget.totalBudgetWan} 万` : ''}）。请撤销已采纳点或调整约束。</div>` : ''}<div class="rpt-summary"><span class="sum-label">规划编辑</span>
     自定义候选与网格候选同场竞价；落入禁建区的候选被排除。成本为规划讨论假设，非工程概算；
     标注为<b>规划候选点</b>，不代表已具备建设条件的地块。</div>
   <table class="tbl"><thead><tr><th>类别</th><th>纬度, 经度</th><th>操作</th></tr></thead>
@@ -460,6 +484,28 @@ function wirePlanEdit() {
       else if (act === 'adopt-custom') {
         const cc = customCandidates[idx];
         if (!cc || !currentResult) return;
+        // F4：禁建区内的候选拒绝采纳
+        const zone = noGoZones.find((z) => localDistM(cc.latLng.lat, cc.latLng.lng, z.center.lat, z.center.lng) <= z.radiusM);
+        if (zone) {
+          banner(`该候选位于禁建区内（圆心 ${zone.center.lat.toFixed(4)}, ${zone.center.lng.toFixed(4)} 半径 ${zone.radiusM}m），已拒绝采纳。`);
+          return;
+        }
+        // F5：未知/不可评估类别不能推断覆盖收益
+        const unavailable = currentResult.assessmentUnavailableCategories ?? currentResult.failedCategories ?? [];
+        if (unavailable.includes(cc.category)) {
+          banner(`「${CATEGORY_MAP[cc.category as keyof typeof CATEGORY_MAP]?.name ?? cc.category}」检索不完整（未知），不能据此推断覆盖收益，已拒绝采纳。`);
+          return;
+        }
+        // F3：采纳前检查剩余预算
+        const rem = remainingBudget();
+        if (rem.maxSites !== undefined && rem.maxSites <= 0) {
+          banner(`已达最大补点数上限（${budget.maxSites} 处）。要继续采纳请先撤销已采纳点或调高上限。`);
+          return;
+        }
+        if (rem.totalBudgetWan !== undefined && rem.costPerSiteWan !== undefined && rem.costPerSiteWan > 0 && rem.totalBudgetWan < rem.costPerSiteWan) {
+          banner(`已超出总预算（${budget.totalBudgetWan} 万 / 单点 ${budget.costPerSiteWan} 万）。要继续采纳请先撤销已采纳点或调整预算。`);
+          return;
+        }
         const cat = cc.category;
         const cov: Record<string, Uint8Array> = {};
         for (const k of Object.keys(currentResult.gap.coveredMasks)) cov[k] = Uint8Array.from(currentResult.gap.coveredMasks[k]);
@@ -505,15 +551,32 @@ function wirePlanEdit() {
     const radius = num('pe-zone');
     if (!radius) { banner('请输入禁建区半径（米）。'); return; }
     noGoZones.push({ center: currentResult.center, radiusM: radius });
+    const centerNow = currentResult.center;
+    const conflicts = acceptedSites.filter((s) => localDistM(s.latLng.lat, s.latLng.lng, centerNow.lat, centerNow.lng) <= radius);
+    if (conflicts.length) banner(`注意：新禁建区与 ${conflicts.length} 个已采纳点重叠——二者在方案讨论中属于冲突项，请人工裁决（系统不自动撤销）。`, 'warn', 10000);
     refresh();
   });
   document.getElementById('pe-budget-apply')?.addEventListener('click', () => {
     if (!currentResult || !sameRules(currentResult)) return;
+    // F9：与项目快照校验共用边界（整数 0-100；成本/预算非负且不超上限）；空输入=不设置
+    const readNum = (id: string, max: number, integer: boolean): { ok: true; v?: number } | { ok: false } => {
+      const raw = (document.getElementById(id) as HTMLInputElement)?.value.trim() ?? '';
+      if (raw === '') return { ok: true };
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > max || (integer && !Number.isInteger(v))) return { ok: false };
+      return { ok: true, v };
+    };
+    const maxR = readNum('pe-max', 100, true);
+    const costR = readNum('pe-cost', 1_000_000, false);
+    const totalR = readNum('pe-total', 10_000_000, false);
+    if (!maxR.ok || !costR.ok || !totalR.ok) {
+      banner('预算输入无效：最大补点数需为 0–100 整数，成本与预算需为非负数且不超上限。本次未修改约束。');
+      return;
+    }
     budget = {};
-    const max = num('pe-max'), cost = num('pe-cost'), total = num('pe-total');
-    if (max !== undefined) budget.maxSites = max;
-    if (cost !== undefined) budget.costPerSiteWan = cost;
-    if (total !== undefined) budget.totalBudgetWan = total;
+    if (maxR.v !== undefined) budget.maxSites = maxR.v;
+    if (costR.v !== undefined) budget.costPerSiteWan = costR.v;
+    if (totalR.v !== undefined) budget.totalBudgetWan = totalR.v;
     if (!Object.keys(budget).length) banner('预算约束已清空。', 'info');
     refresh();
   });

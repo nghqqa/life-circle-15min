@@ -72,3 +72,15 @@ describe('规划编辑与预算约束（№7/8）', () => {
     expect(sites.length).toBe(0);
   });
 });
+
+
+describe('№7-F5 自定义候选未知类别过滤', () => {
+  it('未知类别不进入竞价池，不产生确定性收益理由', () => {
+    const gap = fixtureGap();
+    const sites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, 80, {
+      customCandidates: [{ latLng: center, category: 'market' }],
+      unknownCategories: ['market']
+    });
+    expect(sites.every((s) => s.category !== 'market')).toBe(true);
+  });
+});

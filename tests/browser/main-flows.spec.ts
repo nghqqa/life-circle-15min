@@ -336,3 +336,41 @@ test('规划编辑：自定义候选采纳进方案，预算约束随项目保�
   await page.locator('[data-tab="plan"]').click();
   await expect(page.locator('#panel-body')).toContainText('规划编辑');
 });
+
+test('规划编辑审查修复：禁建区拦截采纳、预算扣减与表单校验', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  await page.locator('[data-tab="plan"]').click();
+  // F4：禁建区覆盖全域后，自定义候选无法采纳
+  await page.locator('#pe-zone').fill('100000');
+  await page.locator('#pe-zone-add').click();
+  await page.locator('#pe-cat').selectOption('market');
+  await page.locator('#pe-lat').fill('28.46');
+  await page.locator('#pe-lng').fill('117.97');
+  await page.locator('#pe-add').click();
+  await page.locator('[data-planact="adopt-custom"]').first().click();
+  await expect(page.locator('#banner')).toContainText('禁建区');
+  await page.locator('[data-planact="remove-zone"]').first().click();
+  // F3：maxSites=1 时采纳一条后，第二条被预算拦下
+  await page.locator('#pe-max').fill('1');
+  await page.locator('#pe-budget-apply').click();
+  await page.locator('[data-planact="adopt-custom"]').first().click();
+  const saved = await store(page);
+  const project = saved.projects.find((p: any) => p.id === saved.recentId);
+  expect(project.workbench.acceptedSites.length).toBe(1);
+  const normal = page.locator('[data-act="accept"]');
+  if (await normal.count()) {
+    await normal.first().click();
+    const after = await store(page);
+    const p2 = after.projects.find((p: any) => p.id === saved.recentId);
+    expect(p2.workbench.acceptedSites.length).toBe(1);
+    await expect(page.locator('#banner')).toContainText('上限');
+  }
+  // F9：非整数上限被表单拦截，不写入快照
+  await page.locator('#pe-max').fill('1.5');
+  await page.locator('#pe-budget-apply').click();
+  await expect(page.locator('#banner')).toContainText('0–100 整数');
+  const final = await store(page);
+  const p3 = final.projects.find((p: any) => p.id === saved.recentId);
+  expect(p3.workbench.budget?.maxSites).toBe(1);
+});
