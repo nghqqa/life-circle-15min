@@ -79,6 +79,26 @@ export class BaiduServerProvider implements AnalysisProvider {
     return response;
   }
 
+  /** 歧义防护：全国 POI 检索同名设施（geocode 全国模糊匹配可能落到异地同名/相似机构，如
+   *  「江西师范大学数字产业学院」不带城市前缀会被解析到北京）。名称强包含才采信。 */
+  private async nationalPoiHit(address: string): Promise<{ lat: number; lng: number } | null> {
+    const r = await this.call('/place/v2/search', { query: address, region: '全国', page_size: '5', page_num: '0' }, buckets.place);
+    if (!r.ok || r.body?.status !== 0) return null;
+    const norm = (s: string) => String(s).replace(/[\s（）()\-—_、，,。.·]/g, '');
+    const q = norm(address);
+    if (!q) return null;
+    for (const it of r.body.results ?? []) {
+      const name = norm(String(it.name ?? '')).replace(/(省|市|区|县)+$/, '');
+      if (name.includes(q) || q.includes(name)) {
+        const loc = it.location;
+        if (Number.isFinite(loc?.lat) && Number.isFinite(loc?.lng)) {
+          return { lat: Number(loc.lat), lng: Number(loc.lng) };
+        }
+      }
+    }
+    return null;
+  }
+
   async geocode(address: string): Promise<LatLng> {
     const key = `geo:${address}`;
     const loc = await withCache(geoCache, key, async () => {
@@ -92,8 +112,16 @@ export class BaiduServerProvider implements AnalysisProvider {
         );
       let r = await once().catch(() => once());
       if (!r.ok || r.body?.status !== 0) r = await once().catch(() => r);
-      if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `geocode ${r.body?.status}`);
-      return { lat: r.body.result.location.lat, lng: r.body.result.location.lng };
+      if (r.ok && r.body?.status === 0 && r.body.result?.location) {
+        // 全国同名 POI 命中 → 优先（geocode 的「教育」级结果也可能是异地模糊匹配）
+        const poi = await this.nationalPoiHit(address).catch(() => null);
+        if (poi) return poi;
+        return { lat: r.body.result.location.lat, lng: r.body.result.location.lng };
+      }
+      // geocode 失败/无结果 → POI 兜底（POI 库常比 geocode 库覆盖更多新建校区）
+      const poi = await this.nationalPoiHit(address).catch(() => null);
+      if (poi) return poi;
+      throw new Error(r.body?.message ?? r.body?.msg ?? `geocode ${r.body?.status}`);
     });
     return loc;
   }
