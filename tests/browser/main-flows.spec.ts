@@ -446,7 +446,7 @@ test('历史趋势：同城多期对照，规则差异期标注不可直接比',
   await expect(page.locator('#panel-body')).toContainText('同口径 ✓');      // 两期同口径标注
   await expect(page.locator('#panel-body')).toContainText('规则 deadbeef'); // 异规则期点名
   await expect(page.locator('#panel-body')).toContainText('不能仅凭分数上升');
->>>>>>> feat/trend
+});
 
 test('样本补录：登记去重提示、并入下一次体检并在警告中说明口径', async ({ page }) => {
   await page.goto('/');
@@ -479,5 +479,4 @@ test('样本补录：登记去重提示、并入下一次体检并在警告中�
   })());
   expect(report.warnings.join('')).toContain('人工补录');
   expect(report.score.total).toBe(75); // 补录并入后覆盖率提升：C74 → B75
->>>>>>> feat/supplements
 });
