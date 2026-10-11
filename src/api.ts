@@ -42,6 +42,38 @@ export interface Gateway {
   walkingRoute(origin: LatLng, dest: LatLng): Promise<RouteProbe | null>;
   /** 返回一条步行路线的分段描述文本（用于过街设施文本扫描） */
   walkingSteps(origin: LatLng, dest: LatLng): Promise<string[]>;
+  /** 步行路线分段文本 + 几何路径（有则用于把过街扫描回标到地图） */
+  walkingGeo?(origin: LatLng, dest: LatLng): Promise<WalkingStepGeo[]>;
+}
+
+/** 步行路线的一段：描述文本 + 该段几何（可为空 = 无几何数据） */
+export interface WalkingStepGeo {
+  text: string;
+  path: LatLng[];
+}
+
+/** 百度 direction 返回的 "lng,lat;lng,lat" 折线串 → LatLng[] */
+function parsePathString(s: unknown): LatLng[] {
+  if (typeof s !== 'string' || !s) return [];
+  const out: LatLng[] = [];
+  for (const pair of s.split(';')) {
+    const [lng, lat] = pair.split(',').map(Number);
+    if (isFinite(lng) && isFinite(lat)) out.push({ lng, lat });
+  }
+  return out;
+}
+
+/** GL 步行 step 的几何提取：兼容 getPath() / _path / path 三种形态 */
+function stepPathToLatLng(s: any): LatLng[] {
+  const raw = typeof s?.getPath === 'function' ? s.getPath() : (s?._path ?? s?.path);
+  if (typeof raw === 'string') return parsePathString(raw);
+  if (!Array.isArray(raw)) return [];
+  const out: LatLng[] = [];
+  for (const p of raw) {
+    const lng = Number(p?.lng ?? p?.x), lat = Number(p?.lat ?? p?.y);
+    if (isFinite(lng) && isFinite(lat)) out.push({ lng, lat });
+  }
+  return out;
 }
 
 // ---------- 熔断器 ----------
@@ -157,13 +189,17 @@ export class ServerGateway implements Gateway {
   }
 
   async walkingSteps(origin: LatLng, dest: LatLng): Promise<string[]> {
+    return (await this.walkingGeo(origin, dest)).map((s) => s.text).filter(Boolean);
+  }
+
+  async walkingGeo(origin: LatLng, dest: LatLng): Promise<WalkingStepGeo[]> {
     const r = await this.get('/api/baidu/direction/v2/walking', {
       origin: `${origin.lat},${origin.lng}`,
       destination: `${dest.lat},${dest.lng}`
     });
     if (r.status !== 0) throw new Error(r.message ?? `direction status ${r.status}`);
     const steps: any[] = r.result?.routes?.[0]?.steps ?? [];
-    return steps.map((s) => String(s.instructions ?? '')).filter(Boolean);
+    return steps.map((s) => ({ text: String(s.instructions ?? ''), path: parsePathString(s.path) }));
   }
 
   private async get(path: string, params: Record<string, string>): Promise<any> {
@@ -332,8 +368,12 @@ export class ClientGateway implements Gateway {
   }
 
   async walkingSteps(origin: LatLng, dest: LatLng): Promise<string[]> {
+    return (await this.walkingGeo(origin, dest)).map((s) => s.text).filter(Boolean);
+  }
+
+  async walkingGeo(origin: LatLng, dest: LatLng): Promise<WalkingStepGeo[]> {
     if (window.BMapGL) {
-      return await this.glWalkingSteps(origin, dest);
+      return await this.glWalkingGeo(origin, dest);
     }
     const r = await this.jsonp('https://api.map.baidu.com/direction/v2/walking', {
       origin: `${origin.lat},${origin.lng}`,
@@ -341,7 +381,7 @@ export class ClientGateway implements Gateway {
     });
     if (r.status !== 0) throw new Error(`direction status ${r.status}`);
     const steps: any[] = r.result?.routes?.[0]?.steps ?? [];
-    return steps.map((s) => String(s.instructions ?? '')).filter(Boolean);
+    return steps.map((s) => ({ text: String(s.instructions ?? ''), path: parsePathString(s.path) }));
   }
 
   private glGeocode(address: string): Promise<GeocodeResult> {
@@ -428,11 +468,11 @@ export class ClientGateway implements Gateway {
     }));
   }
 
-  /** GL SDK 步行路线分段描述（过街设施文本扫描用） */
-  private glWalkingSteps(origin: LatLng, dest: LatLng): Promise<string[]> {
+  /** GL SDK 步行路线分段描述 + 几何（过街设施文本扫描与地图回标用） */
+  private glWalkingGeo(origin: LatLng, dest: LatLng): Promise<WalkingStepGeo[]> {
     return new Promise((resolve) => {
       let settled = false;
-      const done = (v: string[]) => {
+      const done = (v: WalkingStepGeo[]) => {
         if (settled) return;
         settled = true;
         resolve(v);
@@ -449,7 +489,7 @@ export class ClientGateway implements Gateway {
                 return;
               }
               const routes = plans[0]._routes ?? [];
-              const steps: string[] = [];
+              const steps: WalkingStepGeo[] = [];
               for (const r of routes) {
                 for (const s of r?._steps ?? []) {
                   const desc =
@@ -457,7 +497,8 @@ export class ClientGateway implements Gateway {
                     s?._instructions ||
                     s?._description ||
                     '';
-                  if (desc) steps.push(String(desc));
+                  const path = stepPathToLatLng(s);
+                  if (desc || path.length) steps.push({ text: String(desc), path });
                 }
               }
               done(steps);
@@ -559,6 +600,11 @@ export class MockGateway implements Gateway {
     void origin;
     void dest;
     return [];
+  }
+
+  /** 演示通道：无真实路线，返回起终点直线走廊供地图示意回标 */
+  async walkingGeo(origin: LatLng, dest: LatLng): Promise<WalkingStepGeo[]> {
+    return [{ text: '', path: [origin, dest] }];
   }
 
   async walkingRoute(origin: LatLng, dest: LatLng): Promise<RouteProbe | null> {
@@ -789,6 +835,17 @@ export class GatewayChain {
 
   walkingSteps(origin: LatLng, dest: LatLng) {
     return this.run((g) => g.walkingSteps(origin, dest), 'walking-steps');
+  }
+
+  /** 分段文本 + 几何：通道无几何时以起终点直线兜底（图上标注为示意走廊） */
+  walkingGeo(origin: LatLng, dest: LatLng) {
+    return this.run(
+      (g) =>
+        g.walkingGeo
+          ? g.walkingGeo(origin, dest)
+          : g.walkingSteps(origin, dest).then((texts) => texts.map((t) => ({ text: t, path: [] }))),
+      'walking-geo'
+    );
   }
 }
 

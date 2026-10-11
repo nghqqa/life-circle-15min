@@ -231,6 +231,12 @@ export interface CrossingStats {
   crosswalkHint: number;
 }
 
+/** 过街扫描回标到地图的路段：kind 区分普通步行段与命中过街设施的段 */
+export interface CrossingSegment {
+  path: LatLng[];
+  kind: 'walk' | 'overpass' | 'underpass' | 'crosswalk';
+}
+
 export interface ChannelUsage {
   channel: ChannelName;
   ms: number;
@@ -282,6 +288,8 @@ export interface AnalysisResult {
     worstPercent: number;
   };
   crossings: CrossingStats | null;
+  /** 过街扫描的几何路段（供地图回标；无几何数据时为空数组） */
+  crossingSegments?: CrossingSegment[];
   steps: { name: string; usage: ChannelUsage }[];
   mock: boolean;
 }

@@ -1,6 +1,6 @@
 import { CATEGORY_MAP } from '../shared/config.js';
 import { simplifyLine } from '../shared/timefield.js';
-import type { GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
+import type { CrossingSegment, GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
 
 /**
  * 地图视图封装：所有图层 no-op 安全（演示模式下底图不可用时静默跳过）。
@@ -8,7 +8,7 @@ import type { GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
  * 等时环/盲区轮廓为矢量折线，POI/规划点为标注。
  */
 
-export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'batch';
+export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'cross' | 'batch';
 export interface BatchMapCommunity {
   name: string;
   center: LatLng;
@@ -23,8 +23,8 @@ export class MapView {
   map: any = null;
   ready = false;
 
-  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], batch: [] };
-  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, batch: true };
+  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], cross: [], batch: [] };
+  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, cross: true, batch: true };
   private data: Record<string, any> = {};
   private centerMarker: any = null;
 
@@ -128,6 +128,12 @@ export class MapView {
   setBatchResults(communities: BatchMapCommunity[]) {
     this.data.batch = communities;
     this.renderLayer('batch');
+  }
+
+  /** 过街扫描的几何路段回标 */
+  setCrossings(segments: CrossingSegment[]) {
+    this.data.cross = segments;
+    this.renderLayer('cross');
   }
 
   toggleLayer(key: LayerKey, on: boolean) {
@@ -260,6 +266,28 @@ export class MapView {
         });
         map.addOverlay(circle);
         this.overlays.plan.push(circle);
+      }
+    }
+
+    if (key === 'cross' && this.data.cross) {
+      const segStyles: Record<string, { color: string; width: number; opacity: number; dash: boolean }> = {
+        walk: { color: '#78909c', width: 1.5, opacity: 0.55, dash: true },
+        overpass: { color: '#8e24aa', width: 4, opacity: 0.95, dash: false },
+        underpass: { color: '#3949ab', width: 4, opacity: 0.95, dash: false },
+        crosswalk: { color: '#ef6c00', width: 4, opacity: 0.95, dash: false }
+      };
+      for (const seg of this.data.cross as CrossingSegment[]) {
+        if (seg.path.length < 2) continue;
+        const st = segStyles[seg.kind] ?? segStyles.walk;
+        const pts = seg.path.map((p) => new BMapGL.Point(p.lng, p.lat));
+        const pl = new BMapGL.Polyline(pts, {
+          strokeColor: st.color,
+          strokeWeight: st.width,
+          strokeOpacity: st.opacity,
+          strokeStyle: st.dash ? 'dashed' : 'solid'
+        });
+        map.addOverlay(pl);
+        this.overlays.cross.push(pl);
       }
     }
 
