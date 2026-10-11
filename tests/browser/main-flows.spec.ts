@@ -313,3 +313,26 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#banner')).toContainText('薄弱社区表导出失败');
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
+
+test('规划编辑：自定义候选采纳进方案，预算约束随项目保存', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  await page.locator('[data-tab="plan"]').click();
+  await page.locator('#pe-lat').fill('28.46');
+  await page.locator('#pe-lng').fill('117.97');
+  await page.locator('#pe-add').click();
+  await expect(page.locator('#panel-body')).toContainText('28.46000, 117.97000');
+  await page.locator('[data-planact="adopt-custom"]').first().click();
+  const saved = await store(page);
+  const project = saved.projects.find((p: any) => p.id === saved.recentId);
+  expect(project.workbench.acceptedSites[0].rationale).toContain('自定义候选');
+  await page.locator('#pe-max').fill('1');
+  await page.locator('#pe-budget-apply').click();
+  const after = await store(page);
+  const project2 = after.projects.find((p: any) => p.id === saved.recentId);
+  expect(project2.workbench.budget).toMatchObject({ maxSites: 1 });
+  await page.reload();
+  await expect(page.locator('#project-status')).toContainText('已恢复', { timeout: 10_000 });
+  await page.locator('[data-tab="plan"]').click();
+  await expect(page.locator('#panel-body')).toContainText('规划编辑');
+});

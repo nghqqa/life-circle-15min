@@ -19,16 +19,29 @@ let currentTab = 'report';
 let acceptedSites: PlanSite[] = [];
 let rejectedSites: PlanSite[] = [];
 let scenarios: PlanScenarios = {};
+// №7/8 规划编辑状态：自定义候选、禁建区与预算约束（随项目快照保存）
+let customCandidates: { latLng: LatLng; category: PlanSite['category'] }[] = [];
+let noGoZones: { center: LatLng; radiusM: number }[] = [];
+let budget: { maxSites?: number; costPerSiteWan?: number; totalBudgetWan?: number } = {};
 let workbenchListener: (() => void) | null = null;
 
 export function onWorkbenchChange(listener: () => void) { workbenchListener = listener; }
 export function getWorkbenchSnapshot(): WorkbenchSnapshot {
-  return structuredClone({ acceptedSites, rejectedSites, ...(Object.keys(scenarios).length ? { scenarios } : {}) });
+  return structuredClone({
+    acceptedSites, rejectedSites,
+    ...(Object.keys(scenarios).length ? { scenarios } : {}),
+    ...(customCandidates.length ? { customCandidates } : {}),
+    ...(noGoZones.length ? { noGoZones } : {}),
+    ...(Object.keys(budget).length ? { budget } : {})
+  });
 }
 export function setWorkbenchState(snapshot: WorkbenchSnapshot) {
   acceptedSites = structuredClone(snapshot.acceptedSites);
   rejectedSites = structuredClone(snapshot.rejectedSites);
   scenarios = structuredClone(snapshot.scenarios ?? {});
+  customCandidates = structuredClone(snapshot.customCandidates ?? []);
+  noGoZones = structuredClone(snapshot.noGoZones ?? []);
+  budget = structuredClone(snapshot.budget ?? {});
 }
 export function displayedPlanSites(): PlanSite[] {
   return currentResult ? [...acceptedSites, ...currentSites(currentResult)] : [];
@@ -54,6 +67,9 @@ export function setResult(r: AnalysisResult | null) {
     acceptedSites = [];
     rejectedSites = [];
     scenarios = {};
+    customCandidates = [];
+    noGoZones = [];
+    budget = {};
   }
   currentResult = r;
 }
@@ -307,7 +323,8 @@ function planHtml(r: AnalysisResult): string {
   <div class="rpt-summary">
     <span class="sum-label">工作台</span>规划引擎基于贪心最大覆盖给出补点建议。<b>采纳</b>一条建议后，
     其服务盘即刻写入覆盖状态并重新求解剩余建议；<b>跳过</b>则不再在该位置 400m 内重复推荐。
-  </div>`;
+  </div>
+  ${planEditHtml(r)}`;
   if (!r.planSites.length && !acceptedSites.length) {
     return head + `<div class="empty-tip">${r.incomplete ? '检索数据不完整，当前没有可可靠推荐的补点；请核验数据后再规划。' : '当前暂无补点建议，请结合覆盖率与住宅样本判断。'}</div>`;
   }
@@ -377,7 +394,10 @@ function currentSites(r: AnalysisResult): PlanSite[] {
     PERSONA_MAP[r.persona].speed,
     {
       topK: THRESHOLDS.planTopK + rejectedSites.length,
-      unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? []
+      unknownCategories: r.assessmentUnavailableCategories ?? r.failedCategories ?? [],
+      customCandidates,
+      noGoZones,
+      budget
     }
   );
   return sites.filter((s) =>
@@ -385,7 +405,122 @@ function currentSites(r: AnalysisResult): PlanSite[] {
   );
 }
 
+/** №7/8 可编辑规划：自定义候选、禁建区与预算约束（成本为讨论假设，非工程概算） */
+function planEditHtml(r: AnalysisResult): string {
+  const editable = sameRules(r);
+  const core = ['market', 'pharmacy', 'primarySchool'] as const;
+  const catName = (c: string) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c;
+  const candRows = customCandidates.map((c, i) => `<tr>
+      <td>${catName(c.category)}</td><td class="num">${c.latLng.lat.toFixed(5)}, ${c.latLng.lng.toFixed(5)}</td>
+      <td><button class="btn ghost" data-planact="adopt-custom" data-idx="${i}" ${editable ? '' : 'disabled'}>采纳</button>
+      <button class="btn ghost" data-planact="remove-custom" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
+  const zoneRows = noGoZones.map((z, i) => `<tr><td>半径 ${z.radiusM}m</td><td class="num">${z.center.lat.toFixed(5)}, ${z.center.lng.toFixed(5)}</td>
+      <td><button class="btn ghost" data-planact="remove-zone" data-idx="${i}" ${editable ? '' : 'disabled'}>移除</button></td></tr>`).join('');
+  return `<div class="rpt-summary"><span class="sum-label">规划编辑</span>
+    自定义候选与网格候选同场竞价；落入禁建区的候选被排除。成本为规划讨论假设，非工程概算；
+    标注为<b>规划候选点</b>，不代表已具备建设条件的地块。</div>
+  <table class="tbl"><thead><tr><th>类别</th><th>纬度, 经度</th><th>操作</th></tr></thead>
+  <tbody>${candRows || '<tr><td colspan="3">暂无自定义候选</td></tr>'}</tbody></table>
+  <div class="plan-edit-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+    <select id="pe-cat" class="input">${core.map(c => `<option value="${c}">${catName(c)}</option>`).join('')}</select>
+    <input id="pe-lat" class="input" placeholder="纬度" style="width:110px" ${editable ? '' : 'disabled'}>
+    <input id="pe-lng" class="input" placeholder="经度" style="width:110px" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-add" ${editable ? '' : 'disabled'}>添加候选点</button>
+    <input id="pe-zone" class="input" placeholder="禁建区半径 m" style="width:110px" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-zone-add" ${editable ? '' : 'disabled'}>以分析中心添加禁建区</button>
+  </div>
+  <table class="tbl"><thead><tr><th>禁建区</th><th>圆心</th><th>操作</th></tr></thead>
+  <tbody>${zoneRows || '<tr><td colspan="3">暂无禁建区</td></tr>'}</tbody></table>
+  <div class="plan-edit-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+    <input id="pe-max" class="input" placeholder="最大补点数" style="width:110px" value="${budget.maxSites ?? ''}" ${editable ? '' : 'disabled'}>
+    <input id="pe-cost" class="input" placeholder="单点成本(万)" style="width:110px" value="${budget.costPerSiteWan ?? ''}" ${editable ? '' : 'disabled'}>
+    <input id="pe-total" class="input" placeholder="总预算(万)" style="width:110px" value="${budget.totalBudgetWan ?? ''}" ${editable ? '' : 'disabled'}>
+    <button class="btn ghost" id="pe-budget-apply" ${editable ? '' : 'disabled'}>应用预算约束</button>
+  </div>`;
+}
+
+function wirePlanEdit() {
+  const body = document.getElementById('panel-body')!;
+  const refresh = () => {
+    if (currentResult && map.ready) map.setPlanSites([...acceptedSites, ...currentSites(currentResult)]);
+    render();
+    workbenchListener?.();
+  };
+  const num = (id: string) => {
+    const v = Number((document.getElementById(id) as HTMLInputElement)?.value);
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  };
+  body.querySelectorAll('[data-planact]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!currentResult || !sameRules(currentResult)) return;
+      const act = (el as HTMLElement).dataset.planact;
+      const idx = Number((el as HTMLElement).dataset.idx);
+      if (act === 'remove-custom') { customCandidates.splice(idx, 1); refresh(); }
+      else if (act === 'remove-zone') { noGoZones.splice(idx, 1); refresh(); }
+      else if (act === 'adopt-custom') {
+        const cc = customCandidates[idx];
+        if (!cc || !currentResult) return;
+        const cat = cc.category;
+        const cov: Record<string, Uint8Array> = {};
+        for (const k of Object.keys(currentResult.gap.coveredMasks)) cov[k] = Uint8Array.from(currentResult.gap.coveredMasks[k]);
+        for (const s of acceptedSites) applySiteCoverage(cov, s.category, s.latLng, currentResult.field);
+        const w = currentResult.gap.weightGrid;
+        const beforeMask = Uint8Array.from(cov[cat]);
+        let beforeW = 0;
+        for (let k = 0; k < w.length; k++) if (w[k] > 0 && cov[cat][k] === 1) beforeW += w[k];
+        applySiteCoverage(cov, cat, cc.latLng, currentResult.field);
+        let afterW = 0, newlyCells = 0;
+        for (let k = 0; k < w.length; k++) {
+          if (w[k] <= 0 || cov[cat][k] !== 1) continue;
+          afterW += w[k];
+          if (beforeMask[k] !== 1) newlyCells++;
+        }
+        const total = currentResult.gap.totalWeight;
+        const pct = (x: number) => (total > 0 ? x / total : 1) * 100;
+        acceptedSites.push({
+          rank: acceptedSites.length + 1, latLng: cc.latLng, category: cat,
+          coveredCells: newlyCells, coveredWeight: afterW - beforeW,
+          beforePct: Math.round(pct(beforeW) * 10) / 10, afterPct: Math.round(pct(afterW) * 10) / 10,
+          estWalkMin: Math.round((THRESHOLDS.coreRadiusM * 1.25 / PERSONA_MAP[currentResult.persona].speed) * 10) / 10,
+          rationale: `自定义候选落点：采纳后「${CATEGORY_MAP[cat as keyof typeof CATEGORY_MAP].name}」居住覆盖率 ${Math.round(pct(beforeW))}% → ${Math.round(pct(afterW))}%`
+        });
+        customCandidates.splice(idx, 1);
+        refresh();
+      }
+    });
+  });
+  document.getElementById('pe-add')?.addEventListener('click', () => {
+    const lat = Number((document.getElementById('pe-lat') as HTMLInputElement).value);
+    const lng = Number((document.getElementById('pe-lng') as HTMLInputElement).value);
+    const cat = (document.getElementById('pe-cat') as HTMLSelectElement).value as PlanSite['category'];
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -85 || lat > 85 || lng < -180 || lng > 180) {
+      banner('请输入有效的纬度（-85~85）与经度（-180~180）。'); return;
+    }
+    if (!sameRules(currentResult!)) { banner('此项目使用历史规则，仅可查看。'); return; }
+    customCandidates.push({ latLng: { lat, lng }, category: cat });
+    refresh();
+  });
+  document.getElementById('pe-zone-add')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    const radius = num('pe-zone');
+    if (!radius) { banner('请输入禁建区半径（米）。'); return; }
+    noGoZones.push({ center: currentResult.center, radiusM: radius });
+    refresh();
+  });
+  document.getElementById('pe-budget-apply')?.addEventListener('click', () => {
+    if (!currentResult || !sameRules(currentResult)) return;
+    budget = {};
+    const max = num('pe-max'), cost = num('pe-cost'), total = num('pe-total');
+    if (max !== undefined) budget.maxSites = max;
+    if (cost !== undefined) budget.costPerSiteWan = cost;
+    if (total !== undefined) budget.totalBudgetWan = total;
+    if (!Object.keys(budget).length) banner('预算约束已清空。', 'info');
+    refresh();
+  });
+}
+
 function wirePlanActions() {
+  wirePlanEdit();
   const body = document.getElementById('panel-body')!;
   const refresh = () => {
     if (currentResult && map.ready) {
