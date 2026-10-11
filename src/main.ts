@@ -106,15 +106,11 @@ async function init() {
       // 仅在「图上选点」模式下接受地图点击，避免浏览地图时误改中心点
       closeDrawers();
       if (!state.pickMode) return;
-      locationRevision++;
-      state.center = p;
-      state.centerName = '';
-      map.setCenter(p, '中心点');
-      setPickMode(false);
-      void nameCenter(p);
-    });
+      pickCenter(p);
+    }, (p, px) => showCtxMenu(p, px));
     window.__LC_MAP__ = map.map;
     if (!ok) document.getElementById('map-placeholder')?.classList.remove('hidden');
+    else document.getElementById('map-type-switch')?.classList.remove('hidden');
   } else {
     document.getElementById('map-placeholder')?.classList.remove('hidden');
   }
@@ -231,6 +227,32 @@ function bindUi() {
     b.addEventListener('click', () => switchTab((b as HTMLElement).dataset.tab!));
   });
 
+  // 右键菜单动作
+  document.getElementById('ctx-menu')?.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).dataset.act;
+    const menu = document.getElementById('ctx-menu');
+    const p = (menu as any)?._pending as LatLng | undefined;
+    hideCtxMenu();
+    if (!p || !act) return;
+    pickCenter(p);
+    if (act === 'analyze') $('btn-analyze').click();
+  });
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('ctx-menu');
+    if (menu && !menu.contains(e.target as Node)) hideCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { hideCtxMenu(); document.getElementById('help-modal')?.classList.add('hidden'); }
+  });
+
+  // 地图形态切换：平面 / 卫星 / 3D
+  document.getElementById('map-type-switch')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!btn) return;
+    document.querySelectorAll('#map-type-switch button').forEach((b) => b.classList.toggle('on', b === btn));
+    map.setMapType(btn.dataset.mode as '2d' | 'satellite' | '3d');
+  });
+
   $('btn-print').addEventListener('click', () => {
     if (!state.result) return;
     try {
@@ -254,6 +276,33 @@ function setPickMode(on: boolean) {
   btn?.classList.toggle('on', on);
   document.getElementById('map')?.classList.toggle('picking', on);
   if (on) banner('选点模式：在地图上点击选择新的中心点', 'info', 3500);
+}
+
+/** 选点/右键共用：更新中心点并逆地理补名 */
+function pickCenter(p: LatLng) {
+  locationRevision++;
+  state.center = p;
+  state.centerName = '';
+  map.setCenter(p, '中心点');
+  setPickMode(false);
+  void nameCenter(p);
+}
+
+/** 地图右键菜单：设为中心点 / 设为中心点并体检 */
+function showCtxMenu(p: LatLng, px: { x: number; y: number }) {
+  const menu = document.getElementById('ctx-menu');
+  const wrap = document.getElementById('map-wrap');
+  if (!menu || !wrap) return;
+  menu.classList.remove('hidden');
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const bw = wrap.clientWidth, bh = wrap.clientHeight;
+  menu.style.left = `${Math.max(4, Math.min(px.x, bw - mw - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(px.y, bh - mh - 4))}px`;
+  (menu as any)._pending = p;
+}
+
+function hideCtxMenu() {
+  document.getElementById('ctx-menu')?.classList.add('hidden');
 }
 
 /** 逆地理编码：为选定的中心点补一个可读地名（尽力而为，失败保持坐标显示） */

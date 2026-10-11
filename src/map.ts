@@ -28,7 +28,12 @@ export class MapView {
   private data: Record<string, any> = {};
   private centerMarker: any = null;
 
-  async init(browserAk: string, center: LatLng, onPick?: (p: LatLng) => void): Promise<boolean> {
+  async init(
+    browserAk: string,
+    center: LatLng,
+    onPick?: (p: LatLng) => void,
+    onContext?: (p: LatLng, px: { x: number; y: number }) => void
+  ): Promise<boolean> {
     try {
       await this.loadSdk(browserAk);
       // 百度 GL JS API 的经纬度即为 BD-09 坐标，引擎统一以 BD-09 运算
@@ -44,11 +49,39 @@ export class MapView {
           if (e.latlng) onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
         });
       }
+      if (onContext) {
+        // 用 DOM contextmenu 而非地图 rightclick：POI/热力面等覆盖物会吞掉地图层事件
+        const el = document.getElementById('map')!;
+        el.addEventListener('contextmenu', (e: MouseEvent) => {
+          e.preventDefault();
+          const rect = el.getBoundingClientRect();
+          const px = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          const ll = this.map.pixelToPoint(new BMapGL.Pixel(px.x, px.y));
+          if (ll) onContext({ lat: ll.lat, lng: ll.lng }, px);
+        });
+      }
       return true;
     } catch (err) {
       console.warn('[map] init failed:', err);
       this.ready = false;
       return false;
+    }
+  }
+
+  /** 切换底图形态：平面 / 卫星 / 3D（3D = 地球视图 + 倾斜角） */
+  setMapType(mode: '2d' | 'satellite' | '3d') {
+    if (!this.ready) return;
+    const B = window.BMapGL;
+    if (mode === '2d') {
+      this.map.setTilt?.(0);
+      this.map.setMapType?.(B.BMAP_NORMAL_MAP);
+    } else if (mode === 'satellite') {
+      this.map.setTilt?.(0);
+      this.map.setMapType?.(B.BMAP_SATELLITE_MAP ?? B.BMAP_EARTH_MAP);
+    } else {
+      // 3D：地球视图 + 倾斜
+      this.map.setMapType?.(B.BMAP_EARTH_MAP);
+      this.map.setTilt?.(50);
     }
   }
 

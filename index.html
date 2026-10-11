@@ -100,6 +100,13 @@
 
         <div id="map-wrap">
           <div id="map"></div>
+          <div id="map-type-switch" class="hidden" role="group" aria-label="地图形态">
+            <button data-mode="2d" class="on">平面</button><button data-mode="satellite">卫星</button><button data-mode="3d">3D</button>
+          </div>
+          <div id="ctx-menu" class="hidden">
+            <button data-act="center">设为中心点</button>
+            <button data-act="analyze">设为中心点并体检</button>
+          </div>
           <div id="map-placeholder" class="hidden">
             <div class="ph-box">
               <div class="ph-title">演示模式</div>
