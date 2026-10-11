@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, json as expressJson, type Request, type Response } from 'express';
 import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';

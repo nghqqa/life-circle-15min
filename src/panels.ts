@@ -353,6 +353,7 @@ function wireSupplements() {
     removeSupplement(center, Number((b as HTMLElement).dataset.suppRemove));
     render();
   }));
+}
 
 /** №11 行政边界：GeoJSON 导入/清除（分析范围筛选） */
 function boundaryHtml(): string {

@@ -13,3 +13,5 @@ server.log
 test-results/
 playwright-report/
 .batch-jobs.json
+.share-store.json
+.test-share-store.json

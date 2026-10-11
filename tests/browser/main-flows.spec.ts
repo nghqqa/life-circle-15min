@@ -314,7 +314,6 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
 
-<<<<<<< HEAD
 test('路线核验：合成兜底如实提示，不写核验缓存', async ({ page }) => {
   await page.goto('/');
   await importFixture(page);
@@ -427,6 +426,8 @@ test('规划编辑审查修复：禁建区拦截采纳、预算扣减与表单�
   const final = await store(page);
   const p3 = final.projects.find((p: any) => p.id === saved.recentId);
   expect(p3.workbench.budget?.maxSites).toBe(1);
+});
+
 test('历史趋势：同城多期对照，规则差异期标注不可直接比', async ({ page }) => {
   await page.goto('/');
   await importFixture(page); // 第一期（当前规则指纹）
@@ -480,7 +481,8 @@ test('样本补录：登记去重提示、并入下一次体检并在警告中�
   })());
   expect(report.warnings.join('')).toContain('人工补录');
   expect(report.score.total).toBe(75); // 补录并入后覆盖率提升：C74 → B75
-=======
+});
+
 test('老年口径报告含老年友好解读与口径边界说明', async ({ page }) => {
   await page.goto('/');
   await importFixture(page);
@@ -490,5 +492,4 @@ test('老年口径报告含老年友好解读与口径边界说明', async ({ pa
   await page.locator('[data-tab="report"]').click();
   await expect(page.locator('#panel-body')).toContainText('老年友好解读');
   await expect(page.locator('#panel-body')).toContainText('无障碍能力需实地核验');
->>>>>>> feat/report-enhance
 });

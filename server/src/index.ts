@@ -4,13 +4,14 @@ import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { createApiRouter, createAnalysisRouter } from './routes.js';
 import { IpLimiter } from './ratelimit.js';
+import { renderShareHtml, saveShare } from './share.js';
 
 const cfg = loadConfig();
 const app = express();
 const ipLimiter = new IpLimiter();
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '1mb' })); // 审查修复：256kb 会让默认规模报告分享触发 413
 
 // 每 IP 基础限流
 app.use('/api', (req, res, next) => {
@@ -39,6 +40,22 @@ app.get('/api/config', (_req, res) => {
 
 app.use('/api/baidu', createApiRouter(cfg));
 app.use('/api', createAnalysisRouter(cfg));
+
+// №18 审查修复：分享创建与只读页面挂在 app 层——原先在 /api/baidu 路由器内，
+// 实际路径变成 /api/baidu/share 与 /api/baidu/s/:id，前端 /api/share 与 /s/:id 均 404
+app.post('/api/share', (req, res) => {
+  const text = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+  const out = saveShare(text);
+  if ('error' in out) {
+    res.status(400).json({ status: -1, message: out.error });
+    return;
+  }
+  res.json({ status: 0, id: out.id, url: `/s/${out.id}` });
+});
+
+app.get('/s/:id', (req, res) => {
+  res.send(renderShareHtml(String(req.params.id)));
+});
 
 // 生产模式：托管前端构建产物
 const staticDir = path.isAbsolute(cfg.staticDir) ? cfg.staticDir : path.resolve(process.cwd(), cfg.staticDir);
