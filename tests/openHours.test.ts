@@ -30,3 +30,19 @@ describe('营业时段解析（№16）', () => {
     expect(parseOpenHours('18:00-00:00', at(23)).status).toBe('open');
   });
 });
+
+describe('№16-F6 审查修复', () => {
+  it('星期限定的申报文本保守返回 unknown，不与申报相反', () => {
+    const r = parseOpenHours('周一至周五 09:00-18:00', at(12));
+    expect(r.status).toBe('unknown');
+    expect(r.note).toContain('星期');
+  });
+
+  it('全角波浪号分隔的多时段：午间应判营业中', () => {
+    expect(parseOpenHours('11:30～14:00，17:00–21:30', at(12)).status).toBe('open');
+  });
+
+  it('「非24小时」不触发全天规则', () => {
+    expect(parseOpenHours('非24小时，10:00-22:00', at(3)).status).toBe('closed');
+  });
+});

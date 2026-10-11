@@ -16,12 +16,19 @@ export interface OpenHoursResult {
   note: string;
 }
 
-const RANGE_RE = /(\d{1,2})[:：](\d{2})\s*[-–—~至]\s*(\d{1,2})[:：](\d{2})/g;
+const RANGE_RE = /(\d{1,2})[:：](\d{2})\s*[-–—~至～]\s*(\d{1,2})[:：](\d{2})/g;
 
 export function parseOpenHours(raw: string | null | undefined, now: Date = new Date()): OpenHoursResult {
   const text = (raw ?? '').trim();
   if (!text) return { status: 'unknown', raw: null, ranges: [], note: '商户未申报营业时间：未知 ≠ 全天营业' };
-  if (/全天|24\s*小时|24h/i.test(text)) return { status: 'open', raw: text, ranges: [[0, 1440]], note: '商户申报全天营业' };
+  // F6-c：否定式（「非24小时」「非全天」）不得命中全天规则
+  if (/全天/.test(text.replace(/非\s*全天/g, '')) || /(?<!非)(?<!除)24\s*小时/.test(text)) {
+    return { status: 'open', raw: text, ranges: [[0, 1440]], note: '商户申报全天营业' };
+  }
+  // F6-a：星期限定/条件说明无法可靠解析适用日——保守返回 unknown，不作确定判断
+  if (/周[一二三四五六日末天]|星期[一二三四五六日末天]|节假日|法定假日/.test(text) && !/每天|每日/.test(text)) {
+    return { status: 'unknown', raw: text, ranges: [], note: '营业时间含星期/条件限定，无法确认当日适用：未知 ≠ 不营业' };
+  }
   const ranges: [number, number][] = [];
   for (const m of text.matchAll(RANGE_RE)) {
     const [, h1, m1, h2, m2] = m;
