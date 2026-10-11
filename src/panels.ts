@@ -5,7 +5,7 @@ import type { AnalysisResult, GapPatch, LatLng, PlanSite } from '../shared/types
 import { renderCharts } from './charts.js';
 import { banner, CHANNEL_LABEL } from './hud.js';
 import { map } from './main.js';
-import type { WorkbenchSnapshot } from './projects.js';
+import { readAllProjects, type WorkbenchSnapshot } from './projects.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
 import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
 import { explainResult } from './explain.js';
@@ -618,6 +618,33 @@ function wirePlanActions() {
   });
 }
 
+/** №19 历史趋势：同一社区多期体检对照（同口径标注，跨口径不直接比大小） */
+function trendHtml(r: AnalysisResult): string {
+  const sameCenter = (p: { result: AnalysisResult }) =>
+    Math.abs(p.result.center.lat - r.center.lat) * 111320 <= 60 &&
+    Math.abs(p.result.center.lng - r.center.lng) * 111320 * Math.cos((r.center.lat * Math.PI) / 180) <= 60;
+  const mine = readAllProjects().filter((p) => sameCenter(p));
+  if (mine.length < 2) {
+    return `<div class="rpt-summary"><span class="sum-label">历史趋势</span>同一社区保存多期项目后，这里按时间对照总分、覆盖率与补点采纳（当前不足两期）。</div>`;
+  }
+  const fp = r.provenance?.ruleFingerprint ?? '';
+  const rows = mine.map((p) => {
+    const same = (p.result.provenance?.ruleFingerprint ?? '') === fp && fp !== '';
+    const cov = p.result.gap.coverageUnavailable || p.result.gap.coverageShare == null
+      ? '无法评估'
+      : `${Math.round(p.result.gap.coverageShare * 100)}%`;
+    return `<tr><td>${escapeHtml(new Date(p.createdAt).toLocaleString('zh-CN'))}</td>
+      <td>${PERSONA_MAP[p.result.persona]?.name ?? p.result.persona}</td>
+      <td class="num"><b>${p.result.score.total}</b>（${p.result.score.grade}）</td>
+      <td class="num">${cov}</td>
+      <td class="num">${p.workbench.acceptedSites.length}</td>
+      <td>${same ? '同口径 ✓' : `<span style="color:var(--warn)">规则 ${escapeHtml((p.result.provenance?.ruleFingerprint ?? '未知').slice(0, 8))}</span>`}</td></tr>`;
+  }).join('');
+  return `<div class="sec-title">历史趋势（同一社区 · 按时间）</div>
+  <table id="trend-table" class="tbl"><thead><tr><th>体检时间</th><th>人群</th><th>总分</th><th>居住覆盖率</th><th>已采纳补点</th><th>口径</th></tr></thead><tbody>${rows}</tbody></table>
+  <div class="rpt-sub">口径列标注「同口径 ✓」才可直接纵向比大小；规则或数据批次不同的期间只能并列查看。分数变化可能来自百度 POI 数据漂移与规则调整——<b>不能仅凭分数上升认定某项改造产生了效果</b>，需结合设施明细与实地核验。</div>`;
+}
+
 function compareHtml(r: AnalysisResult): string {
   const editable = sameRules(r);
   return `<div class="rpt-summary"><span class="sum-label">方案对比</span>先在「规划建议」采纳补点，再把当前选择记录为 A 或 B。两套方案共用本次体检基线，记录后可继续调整；跳过的点不计入收益。</div>
@@ -629,6 +656,7 @@ function compareHtml(r: AnalysisResult): string {
     <div class="comparison-tools"><button class="btn ghost" id="compare-plan">去调整补点</button><button class="btn ghost" id="compare-reset" ${editable ? '' : 'disabled'}>清空当前选择</button></div>
     <p class="rpt-sub">清空或载入只改变当前工作台，已记录的 A / B 保留；覆盖记录前会提醒确认。</p>
     ${comparisonTable(r, scenarios)}
+    ${trendHtml(r)}
     <div class="rpt-sub">全覆盖：菜市场、药店、小学三类服务齐全的住宅代理权重占比。新增覆盖相对现状计算，重叠服务范围去重。剩余薄弱住宅格只统计有住宅权重的格点。${THRESHOLDS.coreRadiusM} 米直线半径模拟，非真实人口数；现状总分不随补点重算。数据不完整时不提供改善结论。</div>`;
 }
 function wireComparison() {

@@ -222,6 +222,20 @@ export function serializeProject(project: ProjectSnapshot): string {
 }
 export function parseProject(text: string): ProjectSnapshot { return snapshot(json(text)); }
 
+/** №19 历史趋势：只读列出本地保存的全部项目（损坏条目跳过，不抛错） */
+export function readAllProjects(storage: StorageLike = localStorage): ProjectSnapshot[] {
+  try {
+    const raw = storage.getItem(PROJECT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { projects?: unknown[] };
+    const out: ProjectSnapshot[] = [];
+    for (const item of parsed.projects ?? []) {
+      try { out.push(snapshot(item)); } catch { /* 单条损坏跳过 */ }
+    }
+    return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  } catch { return [] }
+}
+
 interface StoreData { format: 'life-circle-project-store'; schemaVersion: 1; recentId: string | null; projects: ProjectSnapshot[] }
 /** One atomic localStorage write prevents a full disk from damaging the existing project/index. */
 export class ProjectStore {
