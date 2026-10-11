@@ -314,23 +314,39 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
 
-test('设施路线核验：真实路网距离与时间场估计并列展示，重复核验命中缓存', async ({ page }) => {
+test('路线核验：合成兜底如实提示，不写核验缓存', async ({ page }) => {
   await page.goto('/');
   await importFixture(page);
   const uid = comparisonFixture().pois.find(p => p.category !== 'residential')!.uid;
-  const clickRouteButton = (uid: string) => page.evaluate(uid => {
+  await page.evaluate(uid => {
     const btn = document.createElement('button');
     btn.setAttribute('data-route-uid', uid);
     document.body.appendChild(btn);
     btn.click();
     btn.remove();
   }, uid);
-  await clickRouteButton(uid);
-  await expect(page.locator('#banner')).toContainText('路线核验');
-  await expect(page.locator('#banner')).toContainText('真实路网');
-  await expect(page.locator('#banner')).toContainText('时间场估计');
-  await clickRouteButton(uid);
-  await expect(page.locator('#banner')).toContainText('缓存');
+  await expect(page.locator('#banner')).toContainText('合成兜底');
+  const routeKeys = await page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('lc-route-v1')));
+  expect(routeKeys).toEqual([]);
 });
 
-
+test('路线核验：真实通道距离与时间场并列，重复核验命中缓存', async ({ page }) => {
+  await page.route('**/api/config', route => route.fulfill({ json: { browserAk: '', hasServerAk: true, mock: false } }));
+  await page.route('**/api/baidu/direction/**', route => route.fulfill({ json: { status: 0, result: { routes: [{ distance: 1234, steps: [] }] } } }));
+  await page.goto('/');
+  await importFixture(page);
+  const uid = comparisonFixture().pois.find(p => p.category !== 'residential')!.uid;
+  const click = (uid: string) => page.evaluate(uid => {
+    const btn = document.createElement('button');
+    btn.setAttribute('data-route-uid', uid);
+    document.body.appendChild(btn);
+    btn.click();
+    btn.remove();
+  }, uid);
+  await click(uid);
+  await expect(page.locator('#banner')).toContainText('真实路网 1234m');
+  await expect(page.locator('#banner')).toContainText('时间场估计');
+  await click(uid);
+  await expect(page.locator('#banner')).toContainText('缓存');
+  await expect(page.locator('#banner')).toContainText('1234m');
+});

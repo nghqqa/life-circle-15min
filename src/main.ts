@@ -155,17 +155,22 @@ async function verifyRouteToPoi(uid: string) {
   }
   const key = routeCacheKey(state.center, poi);
   const cached = getCachedRoute(key);
-  if (cached) {
+  if (cached && cached.channel !== 'mock') {
+    // F1：合成兜底结果不是核验证据，不读取、不入缓存
     map.setRoute([state.center, poi]);
     reportRoute(poi, cached.distM, `${cached.channel} · 缓存`, r);
     return;
   }
+  if (cached) localStorage.removeItem(key);
   banner('正在获取真实步行路线…', 'info', 8000);
   try {
     const res = state.chain ? await state.chain.walkingRoute(state.center, poi) : null;
     const probe: RouteProbe | null = res?.value ?? null;
-    if (!res || !probe || !probe.ok) {
-      banner('路线核验失败：步行规划通道当前不可用。系统不伪装估计结果，请稍后重试或更换通道。');
+    if (!res || !probe || !probe.ok || res.channel === 'mock') {
+      // F1：合成兜底（演示模式）返回的 ok 距离是估算，不是真实路网核验
+      banner(res?.channel === 'mock'
+        ? '当前为合成兜底通道：无法核验真实路网路线（展示的距离是估算，不写入核验缓存）。'
+        : '路线核验失败：步行规划通道当前不可用。系统不伪装估计结果，请稍后重试或更换通道。');
       return;
     }
     setCachedRoute(key, probe.distM, res.channel);
