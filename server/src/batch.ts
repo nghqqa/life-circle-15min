@@ -69,6 +69,8 @@ export interface BatchJob {
   } | null;
   cancelled?: boolean;
   error?: string;
+  /** F7：本任务的人群口径（随结果持久化，脱离页面可还原） */
+  persona?: 'adult' | 'elderly' | 'child';
 }
 
 const jobs = new Map<string, BatchJob>();
@@ -181,7 +183,8 @@ export function startStreetBatch(
   centerName: string,
   radiusM: number,
   maxCommunities: number,
-  scope: 'street' | 'district' = 'street'
+  scope: 'street' | 'district' = 'street',
+  persona: 'adult' | 'elderly' | 'child' = 'adult'
 ): BatchJob {
   const job: BatchJob = {
     id: jobId(),
@@ -199,6 +202,7 @@ export function startStreetBatch(
     communities: [],
     summary: null
   };
+  (job as BatchJob & { persona?: 'adult' | 'elderly' | 'child' }).persona = persona;
   jobs.set(job.id, job);
 
   void (async () => {
@@ -246,7 +250,7 @@ export function startStreetBatch(
         job.current = p.name;
         try {
           const report = await analyzeWithServerProvider(
-            { center: { lat: p.lat, lng: p.lng }, persona: 'adult', minutes: 15 },
+            { center: { lat: p.lat, lng: p.lng }, persona, minutes: 15 },
             ak,
             () => {
               job.requestCount++;

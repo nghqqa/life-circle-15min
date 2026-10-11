@@ -209,8 +209,8 @@ export class MapView {
         });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:180px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/><button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">步行路线核验</button></div>`,
-            { width: 220 }
+            `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/><button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">步行路线核验</button> <button class="btn ghost" data-hours-uid="${escapeHtml(p.uid)}" style="margin-top:6px;font-size:12px;padding:2px 8px">营业时段</button></div>`,
+            { width: 240 }
           );
           map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
         });
