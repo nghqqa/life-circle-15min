@@ -52,7 +52,7 @@ export async function callBaidu(
     }
     // F2：预算闸门放在限流之后、真实出网之前——重试各计一次，全部入口（代理/前置采样/批量）共用
     if (overBudget()) {
-      return { ok: false, httpStatus: 429, body: { status: -1, message: '本地每日预算触顶（保护配额），已停止上游调用' }, tookMs: Date.now() - t0 };
+      return { ok: false, httpStatus: 429, body: { status: -1, message: '本地每日预算触顶，已停止上游调用（可调高 BAIDU_LOCAL_DAILY_BUDGET）' }, tookMs: Date.now() - t0 };
     }
     countUpstream(path);
     try {
