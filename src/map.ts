@@ -165,10 +165,12 @@ export class MapView {
       };
       for (const ring of this.data.rings) {
         const st = styles[ring.level] ?? { color: '#666', width: 2, dash: true };
+        let north: LatLng | null = null;
         for (const line of ring.lines) {
           const simp = simplifyLine(line, 15);
           const pts = simp.map((p) => new BMapGL.Point(p.lng, p.lat));
           if (pts.length < 2) continue;
+          for (const p of simp) if (!north || p.lat > north.lat) north = p;
           const pl = new BMapGL.Polyline(pts, {
             strokeColor: st.color,
             strokeWeight: st.width,
@@ -177,6 +179,19 @@ export class MapView {
           });
           map.addOverlay(pl);
           this.overlays.rings.push(pl);
+        }
+        // 环顶标注：说明这条等时线是什么
+        if (north) {
+          const lbl = new BMapGL.Label(`步行 ${ring.level} 分钟可达边界`, {
+            position: new BMapGL.Point(north.lng, north.lat),
+            offset: new BMapGL.Size(-38, -16)
+          });
+          lbl.setStyle({
+            background: 'rgba(255,255,255,0.92)', color: st.color, border: `1px solid ${st.color}`,
+            borderRadius: '6px', padding: '1px 7px', fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap'
+          });
+          map.addOverlay(lbl);
+          this.overlays.rings.push(lbl);
         }
       }
     }
@@ -260,6 +275,17 @@ export class MapView {
         });
         map.addOverlay(circle);
         this.overlays.plan.push(circle);
+        // 圈顶标注：解释虚线圈 = 补点服务半径
+        const lbl = new BMapGL.Label(`#${site.rank} 补点服务半径 1km`, {
+          position: new BMapGL.Point(site.latLng.lng, site.latLng.lat + 0.0093),
+          offset: new BMapGL.Size(-52, -6)
+        });
+        lbl.setStyle({
+          background: 'rgba(255,255,255,0.92)', color: '#0097a7', border: '1px solid #00bcd4',
+          borderRadius: '6px', padding: '1px 7px', fontSize: '11px', whiteSpace: 'nowrap'
+        });
+        map.addOverlay(lbl);
+        this.overlays.plan.push(lbl);
       }
     }
 

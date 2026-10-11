@@ -73,15 +73,24 @@
             <label><input type="checkbox" id="ly-poi" checked /> 设施 POI</label>
             <label><input type="checkbox" id="ly-gap" checked /> 灰色区域</label>
             <label><input type="checkbox" id="ly-plan" checked /> 补点规划建议</label>
-            <label><input type="checkbox" id="ly-cross" checked /> 过街设施扫描</label>
+            <label><input type="checkbox" id="ly-cross" checked /> 过街设施扫描（体检时执行并回标地图）</label>
           </section>
           <section class="card" id="legend-card">
             <h3>图例</h3>
             <div class="heat-legend">
               <span class="grad"></span>
               <div class="heat-ticks"><i>0′</i><i>5′</i><i>10′</i><i>15′</i><i>20′+</i></div>
+              <p class="legend-note">步行时间热力面：颜色越深可达性越差</p>
             </div>
             <div id="legend-pois" class="poi-legend"></div>
+            <div class="legend-lines">
+              <div class="ll-item"><span class="ll-line" style="border-top:2px dashed #7cb342"></span>步行 5 分钟可达边界</div>
+              <div class="ll-item"><span class="ll-line" style="border-top:2px dashed #fb8c00"></span>步行 10 分钟可达边界</div>
+              <div class="ll-item"><span class="ll-line" style="border-top:2.5px solid #e53935"></span>步行 15 分钟可达边界</div>
+              <div class="ll-item"><span class="ll-line" style="border-top:1.5px dashed #00bcd4"></span>补点服务半径（1km）</div>
+              <div class="ll-item"><span class="ll-line" style="border-top:1.5px solid #c62828"></span>设施盲区轮廓（重/中度）</div>
+              <div class="ll-item"><span class="ll-line" style="border-top:1.5px dashed #78909c"></span>过街扫描路段（细虚线）/ 过街设施段（彩色实线）</div>
+            </div>
           </section>
           <section class="card" id="channel-card">
             <h3>数据通道</h3>
