@@ -54,7 +54,7 @@ async function fakeMap(page: Page) {
         addEventListener(name: string, callback: (e: any) => void) { state.events[name] = callback; }
         addOverlay(item: Overlay) { state.overlays.push(item); }
         removeOverlay(item: Overlay) { state.overlays = state.overlays.filter((x: Overlay) => x !== item); }
-        openInfoWindow(info: Overlay) { state.info = info.args[0]; }
+        openInfoWindow(info: Overlay) { state.info = info.args[0]; state.infoArgs = info.args; }
       },
       Marker: overlay('Marker'), Label: overlay('Label'), GroundOverlay: overlay('GroundOverlay'),
       Polyline: overlay('Polyline'), Polygon: overlay('Polygon'), Circle: overlay('Circle'),
@@ -105,10 +105,10 @@ test('街道结果首次更新后即可定位，地图未知覆盖与列表一�
   const info = await page.evaluate(() => {
     const state = (window as any).__mapTest;
     state.overlays.filter((o: any) => o.kind === 'Marker').at(-1).events.click({});
-    return state.info;
+    return { content: state.info, title: state.infoArgs?.[1]?.title };
   });
-  expect(info).toContain('无法评估');
-  expect(info).toContain('&lt;img'); expect(info).not.toContain('<img');
+  expect(info.content).toContain('无法评估');
+  expect(info.title).toContain('&lt;img'); expect(info.title).not.toContain('<img');
 });
 
 test('另存为、切换和删除不会串改方案，取消删除保留项目', async ({ page }) => {
