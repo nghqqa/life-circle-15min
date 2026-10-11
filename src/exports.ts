@@ -112,7 +112,7 @@ export function printableReport(r: AnalysisResult, w: WorkbenchSnapshot): string
   const table = (headers: string[], rows: string[][]) => `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>圈点体检报告 · ${htmlText(r.centerName)}</title>
   <style>body{font:14px/1.65 "Microsoft YaHei",sans-serif;color:#243846;background:#eef2f5;margin:0}main{max-width:900px;background:white;margin:24px auto;padding:36px}h1{font-size:28px;color:#12695f}h2{font-size:20px;border-bottom:2px solid #dae9e5;padding-bottom:8px;margin-top:28px}h3{font-size:16px}p{overflow-wrap:anywhere}table{border-collapse:collapse;width:100%;font-size:12px;margin:14px 0;table-layout:fixed;overflow-wrap:anywhere}th,td{border:1px solid #d5dfe5;padding:7px;text-align:left}th{background:#eff6f4}thead{display:table-header-group}tr{break-inside:avoid}.notice{background:#fff3df;padding:12px;border-left:4px solid #bc742b}.report-map{width:100%;max-height:380px;display:block}.map-block,.small-section{break-inside:avoid}.legend{font-size:12px;color:#526776}.toolbar{position:sticky;top:0;padding:12px;background:#163f39;color:white;text-align:center}button{font:inherit;padding:6px 18px;cursor:pointer}h2,h3{break-after:avoid}@page{size:A4;margin:15mm;@bottom-center{content:"圈点 · 第 " counter(page) " 页";font-size:9px;color:#62707b}}@media print{body{background:white;font-size:11px}main{padding:0;margin:0;max-width:none}.toolbar{display:none}h1{font-size:24px}h2{font-size:17px}table{font-size:10px}.report-map{max-height:85mm}.section-break{break-before:page}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
-  <div class="toolbar"><button id="print-report">打印 / 另存为 PDF</button>　报告已包含图表与方案，打印时建议关闭浏览器页眉页脚。</div><main>
+  <div class="toolbar" id="lc-toolbar"><button id="print-report">打印 / 另存为 PDF</button>　报告已包含图表与方案；打印建议关闭页眉页脚，并使用<b>无痕窗口</b>（避免浏览器扩展的悬浮工具被一并打印）。</div><main>
   <h1>圈点 · 15 分钟生活圈体检报告</h1><h2>${htmlText(r.centerName)}</h2>
   <p>${PERSONA_MAP[r.persona].name} · 步行 ${r.minutes} 分钟 · ${r.field.speed} m/min<br>分析时间：${htmlText(r.generatedAt)}<br>中心：${r.center.lat.toFixed(6)}, ${r.center.lng.toFixed(6)}（BD-09）</p>
   <p class="notice">${r.mock ? '演示数据，仅用于展示流程。' : '基于本次已取得的设施样本。'}住宅小区密度作为人口代理，非实际人口数；补点收益是 ${THRESHOLDS.coreRadiusM} 米直线服务半径下的模型估算，需结合用地、预算和实地调研验证。</p>
@@ -130,7 +130,23 @@ export function printableReport(r: AnalysisResult, w: WorkbenchSnapshot): string
   <p>“已取完”表示关键词的上游返回已取尽，非现实设施普查。无版本记录或旧规则项目仅保留历史结果。</p>
   ${table(['关键词', '通道', '已取 / 上游总数', '分页 / 上限', '完整性', '采集时间'], (r.poiSearch ?? []).map(s => [htmlText(s.keyword), sourceNames[s.source] + (s.cacheHit ? '（缓存）' : ''), `${s.fetchedCount} / ${s.reportedTotal ?? '未知'}`, `${s.pagesFetched} / ${s.pageLimit}`, statusNames[s.status], htmlText(s.collectedAt)]))}
   <h3>口径与警告</h3>${r.warnings?.length ? `<ul>${r.warnings.map(s => `<li>${htmlText(s)}</li>`).join('')}</ul>` : '<p>本次未记录额外警告，请结合上表完整性与模型口径使用。</p>'}
-  </main><script>document.getElementById('print-report').addEventListener('click',function(){window.print()});</script></body></html>`;
+  </main><script>
+  // 浏览器扩展（截图/便签类）会把悬浮控件注入页面并被一起打印——打印前后只保留本报告自己的节点
+  function __lcCleanInjected() {
+    var h = document.documentElement, b = document.body;
+    Array.prototype.slice.call(h.children).forEach(function (n) { if (n.tagName !== 'HEAD' && n.tagName !== 'BODY') n.remove(); });
+    Array.prototype.slice.call(b.children).forEach(function (n) {
+      if (n.tagName !== 'MAIN' && n.id !== 'lc-toolbar' && n.tagName !== 'SCRIPT') n.remove();
+    });
+  }
+  __lcCleanInjected();
+  setTimeout(__lcCleanInjected, 400);
+  setTimeout(__lcCleanInjected, 1500);
+  document.getElementById('print-report').addEventListener('click', function () {
+    __lcCleanInjected();
+    setTimeout(window.print, 60);
+  });
+  </script></body></html>`;
 }
 export function downloadText(text: string, filename: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));
