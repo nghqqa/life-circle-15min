@@ -242,6 +242,21 @@ function bindUi() {
     try { downloadText(facilityCsv(state.result), '圈点-设施清单.csv', 'text/csv;charset=utf-8'); }
     catch { banner('设施表导出失败，当前数据未改动，请重试或下载项目快照。', 'warn'); }
   });
+  $('btn-share').addEventListener('click', async () => {
+    if (!state.result) return;
+    banner('正在创建只读分享…', 'info', 6000);
+    try {
+      const res = await fetch('/api/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.result) });
+      const data = await res.json();
+      if (data.status !== 0) { banner(`分享失败：${data.message ?? '未知错误'}`); return; }
+      const url = `${location.origin}/s/${data.id}`;
+      try { await navigator.clipboard.writeText(url); banner(`只读分享已创建并复制链接：${url}（固定版本快照，无交互；存储上限 100 份 FIFO）`, 'info', 12000); }
+      catch { banner(`只读分享已创建：${url}（固定版本快照，无交互）`, 'info', 12000); }
+    } catch (err) {
+      banner(`分享失败：${String((err as Error)?.message ?? err)}。演示模式/离线环境无分享服务。`);
+    }
+  });
+
   $('btn-json').addEventListener('click', () => {
     try { exportJson(); }
     catch { banner('JSON 导出失败，当前数据未改动，请重试或下载项目快照。', 'warn'); }

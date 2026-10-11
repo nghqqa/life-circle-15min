@@ -12,3 +12,4 @@ ai_15*.txt
 server.log
 test-results/
 playwright-report/
+.share-store.json

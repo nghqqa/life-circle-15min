@@ -1,10 +1,11 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, json as expressJson, type Request, type Response } from 'express';
 import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
 import { startStreetBatch, getJob, cancelJob, sweepJobs } from './batch.js';
+import { escapeHtml as esc, getShare, saveShare } from './share.js';
 
 /**
  * 百度 Web API 代理：
@@ -168,6 +169,47 @@ export function createApiRouter(cfg: ServerConfig): Router {
     sendCached(res, caches.route, key, () =>
       callBaidu('/direction/v2/walking', { origin, destination }, buckets.route, cfg.akServer)
     );
+  });
+
+  // №18 只读分享：固定版本报告快照（无交互、无 AK；存储上限 100 份 FIFO）
+  router.post('/share', expressJson({ limit: '400kb' }), (req, res) => {
+    const text = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+    const out = saveShare(text);
+    if ('error' in out) {
+      res.status(400).json({ status: -1, message: out.error });
+      return;
+    }
+    res.json({ status: 0, id: out.id, url: `/s/${out.id}` });
+  });
+
+  router.get('/share/:id', (req, res) => {
+    const entry = getShare(String(req.params.id));
+    if (!entry) {
+      res.status(404).send('<html><body style="font-family:sans-serif"><h3>分享不存在或已被清理</h3></body></html>');
+      return;
+    }
+    const r = (entry.report ?? {}) as any;
+    const dims = r.score?.dims ?? {};
+    const warnings: string[] = r.warnings ?? [];
+    const pct = (v: unknown) => typeof v === 'number' ? `${Math.round(v * 100)} 分` : '—';
+    res.send(`<html><head><meta charset="utf-8"><title>圈点 · 只读报告</title>
+      <style>body{font-family:system-ui,'Microsoft YaHei',sans-serif;max-width:720px;margin:24px auto;padding:0 16px;color:#1c2333}
+      .card{background:#f4f6f9;border-radius:10px;padding:14px 18px;margin:12px 0}
+      .kpi{display:inline-block;margin-right:18px;text-align:center}.kpi b{display:block;font-size:22px}
+      .muted{color:#65758d;font-size:12px}.grade{font-size:34px;font-weight:700;color:${r.score?.grade === 'C' || r.score?.grade === 'D' ? '#f08c00' : '#e03131'}}</style></head><body>
+      <h2>圈点 · 15 分钟生活圈 只读报告</h2>
+      <p><b>${esc(String(r.centerName ?? '未命名中心'))}</b> · ${esc(String(r.persona ?? ''))} · ${esc(String(r.minutes ?? ''))} 分钟 · 生成于 ${esc(String(r.generatedAt ?? ''))}</p>
+      <div class="card"><span class="grade">${esc(String(r.score?.grade ?? ''))} ${esc(String(r.score?.total ?? ''))}</span> 分
+        <div class="kpi"><b>${pct(dims.completeness)}</b>完整度</div>
+        <div class="kpi"><b>${pct(dims.proximity)}</b>临近度</div>
+        <div class="kpi"><b>${dims.coverage == null ? '—' : pct(dims.coverage)}</b>人口覆盖率</div>
+        <div class="kpi"><b>${pct(dims.diversity)}</b>多样性</div>
+      </div>
+      <div class="card"><b>诊断</b><br/>${esc(String(r.score?.summary ?? '—'))}</div>
+      ${warnings.length ? `<div class="card"><b>口径与警告</b><ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+      <div class="card"><b>数据与规则</b><br/><span class="muted">应用 ${esc(String(r.provenance?.applicationVersion ?? '—'))} · 规则 ${esc(String(r.provenance?.ruleVersion ?? '—'))} · 指纹 ${esc(String(r.provenance?.ruleFingerprint ?? '—'))} · 坐标系 ${esc(String(r.provenance?.coordinateSystem ?? 'BD-09'))}<br/>
+      本页为固定版本只读快照：不含交互与实时数据；人工纠错标注未计入评分；覆盖率基于住宅 POI 代理而非真实人口。</span></div>
+      </body></html>`);
   });
 
   router.get('/stats', (_req, res) => {
