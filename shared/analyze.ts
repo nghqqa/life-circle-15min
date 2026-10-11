@@ -313,7 +313,8 @@ export async function runAnalysis(
     probeStraightM: probeM,
     failedCategories,
     totalWeight: gap.totalWeight,
-    poiOk
+    poiOk,
+    residentialCount: cleaned.filter((p) => p.category === 'residential').length
   });
   if (quotaExhausted) {
     warnings.unshift('上游配额耗尽，部分或全部检索中止：本报告为不完整结果');

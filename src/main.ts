@@ -660,7 +660,8 @@ async function analyze() {
       probeStraightM: probeM,
       failedCategories,
       totalWeight: gap.totalWeight,
-      poiOk
+      poiOk,
+      residentialCount: pois.filter((p) => p.category === 'residential').length
     });
     warnings.push(...poiSearchWarnings(poiSearch));
     if (boundary) {
