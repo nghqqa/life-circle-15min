@@ -42,6 +42,7 @@ import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
 import { parseOpenHours } from './openHours.js';
 import { addCorrection, listCorrections, undoCorrection, type CorrectionStatus } from './corrections.js';
 import { supplementPois } from './supplements.js';
+import { getBoundary, pointInBoundary } from './boundary.js';
 
 // ---------- 全局状态 ----------
 
@@ -143,6 +144,8 @@ function drawResult(result: AnalysisResult) {
   map.setPlanSites(displayedPlanSites());
   map.setCrossings(result.crossingSegments ?? []);
   map.setRoute(null);
+  const boundaryNow = getBoundary();
+  map.setBoundary(boundaryNow ? boundaryNow.polygons : null);
 }
 
 /** №5 点到设施真实路线核验：按需单次查询，真实路网距离与时间场估计并列展示，失败不伪装 */
@@ -597,6 +600,15 @@ async function analyze() {
     if (supps.length) {
       stepUsage.push({ name: '住宅样本补录并入', usage: { channel: 'client', ms: 0, note: `${supps.length} 条人工补录` } });
     }
+    // №11 行政边界：范围外样本与设施不参与统计（评分规则本身不变）
+    const boundary = getBoundary();
+    if (boundary) {
+      const beforeN = pois.length;
+      const kept = pois.filter((p) => pointInBoundary({ lat: p.lat, lng: p.lng }, boundary));
+      pois.length = 0;
+      pois.push(...kept);
+      stepUsage.push({ name: '行政边界筛选', usage: { channel: 'server', ms: 0, note: `边界「${boundary.name}」内样本 ${pois.length}/${beforeN} 条` } });
+    }
     hud.done(3, 'server', 0);
 
     // 5) 盲区识别 + 评分 + 清单 + 累积机会（失败类别按「无法判断」贯通）
@@ -640,6 +652,9 @@ async function analyze() {
       poiOk
     });
     warnings.push(...poiSearchWarnings(poiSearch));
+    if (boundary) {
+      warnings.unshift(`已导入行政边界「${boundary.name}」（${boundary.vertexCount} 顶点）：仅统计边界内的采样与设施，范围外不参与统计；边界数据来自用户导入，准确性以数据源为准。`);
+    }
     if (supps.length) {
       warnings.push(`含人工补录住宅样本 ${supps.length} 条（来源为用户自填，名称带(补录)后缀），已并入住宅采样与覆盖率；真实人口口径未接入（无普查数据），不与样本口径混用。`);
     }
