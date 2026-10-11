@@ -9,6 +9,7 @@ import type { WorkbenchSnapshot } from './projects.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
 import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
 import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
+import { clearBoundary, getBoundary, parseBoundaryGeoJson, saveBoundary } from './boundary.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
 
@@ -106,7 +107,7 @@ export function render() {
       body.innerHTML = reportHtml(r); animateGrade(r.score.total); renderCharts(r);
       break;
     case 'checklist': if (r) body.innerHTML = checklistHtml(r); break;
-    case 'gaps': if (r) body.innerHTML = gapsHtml(r); break;
+    case 'gaps': if (r) { body.innerHTML = gapsHtml(r) + boundaryHtml(); wireBoundary(); } break;
     case 'plan': body.innerHTML = r ? planHtml(r) : '<div class="empty-tip">先完成一次体检</div>'; wirePlanActions(); break;
     case 'compare': if (r) { body.innerHTML = compareHtml(r); wireComparison(); } break;
     case 'street': body.innerHTML = streetHtml(); wireStreet(); break;
@@ -261,6 +262,36 @@ function checklistHtml(r: AnalysisResult): string {
     <thead><tr><th>设施项</th><th>阈值</th><th>实测最近</th><th>判定</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+/** №11 行政边界：GeoJSON 导入/清除（分析范围筛选） */
+function boundaryHtml(): string {
+  const b = getBoundary();
+  return `<div class="sec-title">行政边界（№11）</div>
+  <div class="rpt-summary">导入 GeoJSON（Polygon/MultiPolygon）后，仅边界内的采样与设施参与统计，范围外不参与；边界来自用户导入，准确性以数据源为准。下一次体检生效。</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center">
+    <input type="file" id="bnd-file" accept=".json,.geojson" style="font-size:12px">
+    <button class="btn ghost" id="bnd-clear">清除边界</button>
+    <span id="bnd-status" class="rpt-sub">${b ? `当前：${escapeHtml(b.name)}（${b.vertexCount} 顶点）` : '未设置边界（默认以分析中心半径为范围）'}</span>
+  </div>`;
+}
+
+function wireBoundary() {
+  document.getElementById('bnd-file')?.addEventListener('change', async (ev) => {
+    const file = (ev.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const b = parseBoundaryGeoJson(text, file.name.replace(/\.(geo)?json$/i, ''));
+    if (!b) { banner('边界解析失败：需要含 Polygon/MultiPolygon 的 GeoJSON。'); return; }
+    saveBoundary(b);
+    banner(`边界「${b.name}」已导入（${b.vertexCount} 顶点），下一次体检生效。`, 'info', 10000);
+    render();
+  });
+  document.getElementById('bnd-clear')?.addEventListener('click', () => {
+    clearBoundary();
+    banner('边界已清除，恢复默认半径范围（下一次体检生效）。', 'info');
+    render();
+  });
 }
 
 function gapsHtml(r: AnalysisResult): string {

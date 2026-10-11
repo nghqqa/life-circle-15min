@@ -8,7 +8,7 @@ import type { GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
  * 等时环/盲区轮廓为矢量折线，POI/规划点为标注。
  */
 
-export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'batch';
+export type LayerKey = 'heat' | 'rings' | 'poi' | 'gap' | 'plan' | 'batch' | 'boundary';
 export interface BatchMapCommunity {
   name: string;
   center: LatLng;
@@ -23,8 +23,8 @@ export class MapView {
   map: any = null;
   ready = false;
 
-  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], batch: [] };
-  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, batch: true };
+  private overlays: Record<string, any[]> = { heat: [], rings: [], poi: [], gap: [], plan: [], batch: [], boundary: [] };
+  private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, batch: true, boundary: true };
   private data: Record<string, any> = {};
   private centerMarker: any = null;
 
@@ -125,6 +125,12 @@ export class MapView {
   }
 
   /** 街道级批量结果：按等级着色的小区标注（点击弹出摘要） */
+  /** №11 行政边界轮廓（青色虚线） */
+  setBoundary(polygons: [number, number][][] | null) {
+    this.data.boundary = polygons;
+    this.renderLayer('boundary');
+  }
+
   setBatchResults(communities: BatchMapCommunity[]) {
     this.data.batch = communities;
     this.renderLayer('batch');
@@ -178,6 +184,15 @@ export class MapView {
           map.addOverlay(pl);
           this.overlays.rings.push(pl);
         }
+      }
+    }
+
+    if (key === 'boundary' && this.data.boundary) {
+      for (const ring of this.data.boundary as [number, number][][]) {
+        const path = ring.map(([lng, lat]) => new BMapGL.Point(lng, lat));
+        const pl = new BMapGL.Polyline(path, { strokeColor: '#0ca678', strokeWeight: 2.5, strokeOpacity: 0.8, strokeStyle: 'dashed' });
+        map.addOverlay(pl);
+        this.overlays.boundary.push(pl);
       }
     }
 

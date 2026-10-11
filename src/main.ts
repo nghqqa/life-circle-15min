@@ -37,6 +37,7 @@ import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch,
 import type { PoiSearchCompleteness } from '../shared/types.js';
 import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
+import { getBoundary, pointInBoundary } from './boundary.js';
 
 // ---------- 全局状态 ----------
 
@@ -140,6 +141,8 @@ function drawResult(result: AnalysisResult) {
   map.setPois(result.pois);
   map.setGaps(result.gap.patches);
   map.setPlanSites(displayedPlanSites());
+  const boundaryNow = getBoundary();
+  map.setBoundary(boundaryNow ? boundaryNow.polygons : null);
 }
 
 function restoreProject(project: ProjectSnapshot) {
@@ -416,6 +419,15 @@ async function analyze() {
       (note) => hud.note(note),
       stepUsage
     );
+    // №11 行政边界：范围外样本与设施不参与统计（评分规则本身不变）
+    const boundary = getBoundary();
+    if (boundary) {
+      const beforeN = pois.length;
+      const kept = pois.filter((p) => pointInBoundary({ lat: p.lat, lng: p.lng }, boundary));
+      pois.length = 0;
+      pois.push(...kept);
+      stepUsage.push({ name: '行政边界筛选', usage: { channel: 'server', ms: 0, note: `边界「${boundary.name}」内样本 ${pois.length}/${beforeN} 条` } });
+    }
     hud.done(3, 'server', 0);
 
     // 5) 盲区识别 + 评分 + 清单 + 累积机会（失败类别按「无法判断」贯通）
@@ -459,6 +471,9 @@ async function analyze() {
       poiOk
     });
     warnings.push(...poiSearchWarnings(poiSearch));
+    if (boundary) {
+      warnings.unshift(`已导入行政边界「${boundary.name}」（${boundary.vertexCount} 顶点）：仅统计边界内的采样与设施，范围外不参与统计；边界数据来自用户导入，准确性以数据源为准。`);
+    }
     if (quotaExhausted) warnings.unshift('已停止后续检索与过街扫描，避免继续消耗配额。');
     const generatedAt = new Date().toISOString();
     const mock = pre.channel === 'mock' || rm.channel === 'mock' || poiUsedMock;
