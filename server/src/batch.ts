@@ -180,7 +180,8 @@ export function startStreetBatch(
   centerName: string,
   radiusM: number,
   maxCommunities: number,
-  scope: 'street' | 'district' = 'street'
+  scope: 'street' | 'district' = 'street',
+  persona: 'adult' | 'elderly' | 'child' = 'adult'
 ): BatchJob {
   const job: BatchJob = {
     id: jobId(),
@@ -239,7 +240,7 @@ export function startStreetBatch(
         job.current = p.name;
         try {
           const report = await analyzeWithServerProvider(
-            { center: { lat: p.lat, lng: p.lng }, persona: 'adult', minutes: 15 },
+            { center: { lat: p.lat, lng: p.lng }, persona, minutes: 15 },
             ak,
             () => {
               job.requestCount++;

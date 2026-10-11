@@ -483,6 +483,11 @@ function streetHtml(): string {
         <option value="district">城区试点</option>
       </select>
       <label class="lbl">采样半径</label>
+      <select id="street-persona" style="height:30px" title="批量体检人群">
+        <option value="adult">一般成人</option>
+        <option value="elderly">老年人</option>
+        <option value="child">儿童(陪同)</option>
+      </select>
       <select id="street-radius" style="height:30px">
         <option value="1500">1.5 km</option>
         <option value="2500" selected>2.5 km</option>
@@ -535,7 +540,8 @@ function wireStreet() {
           address: addr,
           scope,
           radiusM: Number((document.getElementById('street-radius') as HTMLSelectElement).value),
-          maxCommunities: Number((document.getElementById('street-max') as HTMLSelectElement).value)
+          maxCommunities: Number((document.getElementById('street-max') as HTMLSelectElement).value),
+          persona: (document.getElementById('street-persona') as HTMLSelectElement).value
         })
       });
       const data = await res.json();
