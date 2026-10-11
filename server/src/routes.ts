@@ -235,7 +235,8 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
   // POST /api/batch/street  {address|lat/lng, scope?, radiusM?, maxCommunities?} → {jobId}
   // scope=street（默认，≤3km/16 点）｜scope=district（城区试点，≤8km/30 点，结果按街道分组）
   router.post('/batch/street', (req, res) => {
-    const { lat, lng, address, radiusM, maxCommunities, scope } = req.body ?? {};
+    const { lat, lng, address, radiusM, maxCommunities, scope, persona } = req.body ?? {};
+    const personaId = ['adult', 'elderly', 'child'].includes(persona) ? persona : 'adult';
     const isDistrict = scope === 'district';
     if (!address && (typeof lat !== 'number' || typeof lng !== 'number')) {
       res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
@@ -251,7 +252,8 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
         name,
         Math.min(maxRadius, Math.max(800, Number(radiusM) || (isDistrict ? 5000 : 2500))),
         Math.min(maxN, Math.max(3, Number(maxCommunities) || (isDistrict ? 16 : 10))),
-        isDistrict ? 'district' : 'street'
+        isDistrict ? 'district' : 'street',
+        personaId
       );
       res.json({ status: 0, jobId: job.id, total: job.total, scope: isDistrict ? 'district' : 'street' });
     };

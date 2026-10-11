@@ -33,13 +33,21 @@ export interface ExportCommunity {
   name: string; center: LatLng; score: number; grade: string; coverageShare: number | null;
   coverageUnavailable?: boolean; dominantMissing: string | null; error?: string;
 }
-export function weakCommunityCsv(communities: ExportCommunity[], jobId: string, exportedAt = new Date().toISOString()): string {
+export function weakCommunityCsv(
+  communities: ExportCommunity[],
+  jobId: string,
+  exportedAt = new Date().toISOString(),
+  meta: { persona?: string; ruleVersion?: string } = {}
+): string {
+  const personaName = meta.persona && meta.persona !== 'adult'
+    ? ({ adult: '一般成人', elderly: '老年人', child: '儿童(陪同)' } as Record<string, string>)[meta.persona] ?? meta.persona
+    : '一般成人';
   const valid = communities.filter(c => !c.error && Number.isFinite(c.score) && c.score >= 0);
   const coverage = (c: ExportCommunity) => c.coverageUnavailable || c.coverageShare == null ? null : c.coverageShare;
   return makeCsv([
-    ['任务编号', '导出时间', '口径', '成功样本数', '失败样本数', '小区', '纬度', '经度', '坐标系', '评分', '等级', '居住权重覆盖率', '主要缺失', '判定原因'],
+    ['任务编号', '导出时间', '口径', '人群', '规则版本', '成功样本数', '失败样本数', '小区', '纬度', '经度', '坐标系', '评分', '等级', '居住权重覆盖率', '主要缺失', '判定原因'],
     ...valid.filter(c => c.score < 75 || (coverage(c) !== null && coverage(c)! < 0.8)).sort((a, b) => a.score - b.score).map(c => [
-      jobId, exportedAt, '片区住宅抽样，非行政全域普查；数据模式和规则以原批量任务为准', valid.length, communities.length - valid.length,
+      jobId, exportedAt, '片区住宅抽样，非行政全域普查；数据模式和规则以原批量任务为准', personaName, meta.ruleVersion ?? '', valid.length, communities.length - valid.length,
       c.name, c.center.lat, c.center.lng, 'BD-09', c.score, c.grade, percent(coverage(c)),
       c.dominantMissing ? CATEGORY_MAP[c.dominantMissing as keyof typeof CATEGORY_MAP]?.name ?? c.dominantMissing : '',
       [c.score < 75 ? '评分低于75' : '', coverage(c) !== null && coverage(c)! < 0.8 ? '居住权重覆盖率低于80%' : '', coverage(c) === null ? '覆盖率无法评估' : ''].filter(Boolean).join('；')
