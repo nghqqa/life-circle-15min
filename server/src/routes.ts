@@ -105,6 +105,17 @@ export function createApiRouter(cfg: ServerConfig): Router {
     sendCached(res, caches.place, key, () => callBaidu('/place/v2/search', params, buckets.place, cfg.akServer));
   });
 
+  // №16 营业时段核验：POI 详情（open_time 为商户申报，未知不默认全天营业）
+  router.get('/place/v2/detail', (req, res) => {
+    const uid = String(req.query.uid ?? '');
+    if (!uid) {
+      res.json({ status: -1, message: '缺少 uid' });
+      return;
+    }
+    const key = `detail:${uid}`;
+    sendCached(res, caches.place, key, () => callBaidu('/place/v2/detail', { uid, scope: '2' }, buckets.place, cfg.akServer));
+  });
+
   // ---- 批量步行算路：GET origins=lat,lng & destinations=lat,lng|lat,lng|... ----
   router.get('/routematrix/v2/walking', async (req, res) => {
     const origins = String(req.query.origins ?? '');

@@ -313,3 +313,18 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#banner')).toContainText('薄弱社区表导出失败');
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
+
+test('营业时段：演示模式如实报未知，不默认全天营业', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  const uid = comparisonFixture().pois.find(p => p.category !== 'residential')!.uid;
+  await page.evaluate(uid => {
+    const btn = document.createElement('button');
+    btn.setAttribute('data-hours-uid', uid);
+    document.body.appendChild(btn);
+    btn.click();
+    btn.remove();
+  }, uid);
+  await expect(page.locator('#banner')).toContainText('未知');
+  await expect(page.locator('#banner')).toContainText('全天营业');
+});
