@@ -30,12 +30,20 @@ import { ClientGateway, GatewayChain, MockGateway, ServerGateway, makeProbeDesti
 import { fieldToDataUrl } from './fieldRender.js';
 import { Hud, banner, CHANNEL_LABEL } from './hud.js';
 import { MapView, type LayerKey } from './map.js';
-import { getWorkbenchState, setResult, switchTab } from './panels.js';
+import { getWorkbenchState, getWorkbenchSnapshot, setWorkbenchState, onWorkbenchChange, displayedPlanSites, setResult, switchTab } from './panels.js';
+import { setupProjects } from './projectUi.js';
+import { createProvenance } from '../shared/provenance.js';
+import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch, isPoiQuotaError } from '../shared/poiSearch.js';
+import type { PoiSearchCompleteness } from '../shared/types.js';
+import type { ProjectSnapshot } from './projects.js';
 
 // ---------- 全局状态 ----------
 
 export const map = new MapView();
 const hud = new Hud();
+let projects: ReturnType<typeof setupProjects> | null = null;
+let analyzing = false;
+let locationRevision = 0;
 
 const state = {
   center: DEFAULT_CENTER as LatLng,
@@ -97,6 +105,7 @@ async function init() {
       // 仅在「图上选点」模式下接受地图点击，避免浏览地图时误改中心点
       closeDrawers();
       if (!state.pickMode) return;
+      locationRevision++;
       state.center = p;
       state.centerName = '';
       map.setCenter(p, '中心点');
@@ -112,6 +121,41 @@ async function init() {
   buildLegend();
   bindUi();
   updateChannelCard();
+  projects = setupProjects({
+    restore: restoreProject,
+    getResult: () => state.result,
+    getWorkbench: getWorkbenchSnapshot,
+    isBusy: () => analyzing
+  });
+  onWorkbenchChange(() => projects?.workbenchChanged());
+}
+
+function drawResult(result: AnalysisResult) {
+  if (!map.ready) return;
+  const bounds = fieldBounds(result.field);
+  map.setCenter(result.center, result.centerName);
+  map.setHeat(fieldToDataUrl(result.field), bounds.sw, bounds.ne);
+  map.setRings(result.rings);
+  map.setPois(result.pois);
+  map.setGaps(result.gap.patches);
+  map.setPlanSites(displayedPlanSites());
+}
+
+function restoreProject(project: ProjectSnapshot) {
+  locationRevision++;
+  const result = project.result;
+  state.result = result;
+  state.center = { ...result.center };
+  state.centerName = result.centerName;
+  state.persona = result.persona;
+  state.minutes = result.minutes;
+  (document.getElementById('addr-input') as HTMLInputElement).value = result.centerName;
+  (document.getElementById('persona') as HTMLSelectElement).value = result.persona;
+  (document.getElementById('minutes') as HTMLSelectElement).value = String(result.minutes);
+  setResult(result);
+  setWorkbenchState(project.workbench);
+  drawResult(result);
+  switchTab('report');
 }
 
 function buildLegend() {
@@ -134,8 +178,10 @@ function bindUi() {
   $('btn-locate').addEventListener('click', async () => {
     const addr = ($('addr-input') as HTMLInputElement).value.trim();
     if (!addr || !state.chain) return;
+    const revision = ++locationRevision;
     try {
       const r = await state.chain.geocode(addr);
+      if (revision !== locationRevision || analyzing) return;
       state.center = { lat: r.value.lat, lng: r.value.lng };
       state.centerName = addr;
       map.setCenter(state.center, addr);
@@ -198,11 +244,12 @@ function setPickMode(on: boolean) {
 
 /** 逆地理编码：为选定的中心点补一个可读地名（尽力而为，失败保持坐标显示） */
 async function nameCenter(p: LatLng) {
+  const revision = locationRevision;
   const chain = state.chain;
   if (!chain) return;
   try {
     const r = await chain.reverseGeocode(p);
-    if (state.center.lat === p.lat && state.center.lng === p.lng) {
+    if (revision === locationRevision && state.center.lat === p.lat && state.center.lng === p.lng) {
       state.centerName = r.value;
       map.setCenter(p, r.value);
     }
@@ -234,9 +281,15 @@ function updateChannelCard() {
 
 async function analyze() {
   const chain = state.chain;
-  if (!chain) return;
+  if (!chain || analyzing) return;
+  analyzing = true;
+  locationRevision++;
+  setPickMode(false);
+  projects?.setBusy(true);
   const btn = document.getElementById('btn-analyze') as HTMLButtonElement;
   btn.disabled = true;
+  const controls = ['addr-input', 'btn-locate', 'btn-pick', 'persona', 'minutes'];
+  controls.forEach((id) => (document.getElementById(id) as HTMLInputElement).disabled = true);
 
   const persona = PERSONA_MAP[state.persona];
   const steps = ['中心定位', '路网采样算路', '时间场与等时环', '设施 POI 检索', '盲区识别与评分', '补点规划求解', '过街设施扫描'];
@@ -344,7 +397,7 @@ async function analyze() {
 
     // 4) POI 检索
     hud.doing(3, '民生设施分类检索…');
-    const { pois, failedCategories, usedMock: poiUsedMock, poiOk } = await searchAllCategories(
+    const { pois, failedCategories, poiSearch, quotaExhausted, usedMock: poiUsedMock, poiOk } = await searchAllCategories(
       chain,
       (note) => hud.note(note),
       stepUsage
@@ -353,23 +406,30 @@ async function analyze() {
 
     // 5) 盲区识别 + 评分 + 清单 + 累积机会（失败类别按「无法判断」贯通）
     hud.doing(4, '人口加权盲区聚合 · 四维评分');
-    const gap = analyzeGaps(field, pois, { failedCategories });
-    const score = computeScore(state.center, pois, gap, { failedCategories });
-    const checklist = buildChecklist(state.center, pois, { failedCategories });
+    const unavailable = assessmentUnavailableCategories(failedCategories, poiSearch);
+    const gap = analyzeGaps(field, unavailable.includes('residential') ? pois.filter((p) => p.category !== 'residential') : pois,
+      { failedCategories: unavailable });
+    if (unavailable.some((category) => ['market', 'pharmacy', 'primarySchool', 'residential'].includes(category))) {
+      gap.coverageShare = null;
+      gap.severeShare = null;
+      gap.coverageUnavailable = true;
+    }
+    const score = computeScore(state.center, pois, gap, { failedCategories: unavailable });
+    const checklist = buildChecklist(state.center, pois, { failedCategories: unavailable });
     const cumulative = cumulativeOpportunities(field, pois, state.minutes);
     hud.done(4, 'server', 0);
 
     // 6) 补点规划
     hud.doing(5, '贪心最大覆盖求解补点位置');
     const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed, {
-      unknownCategories: failedCategories
+      unknownCategories: unavailable
     });
     hud.done(5, 'server', 0);
 
     // 7) 过街设施扫描（可选）
     hud.doing(6);
     let crossings = null;
-    if ((document.getElementById('ly-cross') as HTMLInputElement).checked) {
+    if (!quotaExhausted && (document.getElementById('ly-cross') as HTMLInputElement).checked) {
       crossings = await scanCrossings(chain, state.center, probeM, stepUsage);
     }
     hud.done(6, 'server', 0);
@@ -384,6 +444,10 @@ async function analyze() {
       totalWeight: gap.totalWeight,
       poiOk
     });
+    warnings.push(...poiSearchWarnings(poiSearch));
+    if (quotaExhausted) warnings.unshift('已停止后续检索与过街扫描，避免继续消耗配额。');
+    const generatedAt = new Date().toISOString();
+    const mock = pre.channel === 'mock' || rm.channel === 'mock' || poiUsedMock;
 
     // 渲染
     const result: AnalysisResult = {
@@ -391,7 +455,8 @@ async function analyze() {
       centerName: state.centerName || `中心点 ${state.center.lat.toFixed(5)},${state.center.lng.toFixed(5)}`,
       persona: state.persona,
       minutes: state.minutes,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
+      provenance: createProvenance({ generatedAt, poiSearch, channels: stepUsage.map((s) => s.usage.channel), mock }),
       model,
       field,
       rings,
@@ -404,26 +469,28 @@ async function analyze() {
       accuracy,
       warnings,
       failedCategories,
+      poiSearch,
+      incompleteCategories: unavailable,
+      assessmentUnavailableCategories: unavailable,
+      incomplete: unavailable.length > 0 || quotaExhausted,
+      quotaExhausted,
       crossings,
       steps: stepUsage,
-      mock: rm.channel === 'mock' || poiUsedMock
+      mock
     };
     state.result = result;
 
-    if (map.ready) {
-      const b = fieldBounds(field);
-      map.setHeat(fieldToDataUrl(field), b.sw, b.ne);
-      map.setRings(rings);
-      map.setPois(pois);
-      map.setGaps(gap.patches);
-      map.setPlanSites(planSites);
-    }
     setResult(result);
+    drawResult(result);
     switchTab('report');
+    projects?.analysisCompleted();
     hud.note(`完成：总分 ${score.total}（${score.grade}），发现 ${gap.patches.length} 个灰色区域，给出 ${planSites.length} 条补点建议`);
     hud.finish();
   } finally {
+    analyzing = false;
+    projects?.setBusy(false);
     btn.disabled = false;
+    controls.forEach((id) => (document.getElementById(id) as HTMLInputElement).disabled = false);
     updateChannelCard();
   }
 }
@@ -432,9 +499,11 @@ async function searchAllCategories(
   chain: GatewayChain,
   onNote: (s: string) => void,
   stepUsage: AnalysisResult['steps']
-): Promise<{ pois: Poi[]; failedCategories: CategoryId[]; usedMock: boolean; poiOk: boolean }> {
-  const tasks = CATEGORIES.filter((c) => c.id !== 'residential').flatMap((c) => c.keywords.map((kw) => ({ cat: c, kw })));
+): Promise<{ pois: Poi[]; failedCategories: CategoryId[]; poiSearch: PoiSearchCompleteness[]; quotaExhausted: boolean; usedMock: boolean; poiOk: boolean }> {
+  const tasks = CATEGORIES.flatMap((c) => c.keywords.map((kw) => ({ cat: c, kw })));
   const out: Poi[] = [];
+  const poiSearch: PoiSearchCompleteness[] = [];
+  let quotaExhausted = false;
   const failedKw = new Set<string>();
   let done = 0;
   let channel: ChannelName = 'server';
@@ -446,38 +515,37 @@ async function searchAllCategories(
   const worker = async () => {
     while (tasks.length) {
       const t = tasks.shift()!;
+      if (quotaExhausted) {
+        failedKw.add(t.kw);
+        poiSearch.push(unqueriedPoiSearch(t.kw, t.cat.id, channel, 'skipped', true));
+        continue;
+      }
       try {
-        const r = await chain.searchPoi({ query: t.kw, location: state.center, radiusM: THRESHOLDS.searchRadiusM });
-        for (const p of r.value) out.push({ ...p, category: t.cat.id });
+        const r = await chain.searchPoiDetailed({ query: t.kw, location: state.center, radiusM: THRESHOLDS.searchRadiusM }, t.cat.id);
+        for (const p of r.value.pois) out.push({ ...p, category: t.cat.id });
+        poiSearch.push(r.value.completeness);
+        quotaExhausted ||= r.value.completeness.quotaExhausted;
+        if (r.value.completeness.status === 'failed') failedKw.add(t.kw);
         channel = r.channel;
         if (r.channel === 'mock') usedMock = true;
         done++;
-        onNote(`POI 检索 ${done}：${t.kw} → ${r.value.length} 条（${CHANNEL_LABEL[r.channel]}）`);
-      } catch {
+        onNote(`POI 检索 ${done}：${t.kw} → ${r.value.pois.length} 条（${CHANNEL_LABEL[r.channel]}）`);
+      } catch (error) {
         done++;
         failedKw.add(t.kw);
+        quotaExhausted = isPoiQuotaError(error);
+        poiSearch.push(unqueriedPoiSearch(t.kw, t.cat.id, channel, 'failed', quotaExhausted));
       }
       await new Promise((res) => setTimeout(res, 450));
     }
   };
   await worker();
 
-  // 住宅小区（人口代理）
-  for (const kw of ['住宅小区', '小区']) {
-    try {
-      const r = await chain.searchPoi({ query: kw, location: state.center, radiusM: THRESHOLDS.searchRadiusM });
-      for (const p of r.value) out.push({ ...p, category: 'residential' as const });
-      channel = r.channel;
-      if (r.channel === 'mock') usedMock = true;
-    } catch {
-      /* 忽略 */
-    }
-  }
   totalMs = Math.round(performance.now() - t0);
   const failedCategories = CATEGORIES.filter((c) => c.keywords.every((kw) => failedKw.has(kw))).map((c) => c.id);
-  const poiOk = CATEGORIES.filter((c) => c.scored && !failedCategories.includes(c.id)).some((c) => (out.filter((p) => p.category === c.id).length > 0));
+  const poiOk = CATEGORIES.filter((c) => c.scored).some((c) => poiSearch.some((s) => s.category === c.id && s.status === 'complete'));
   stepUsage.push({ name: '设施 POI 检索', usage: { channel, ms: totalMs, note: `共 ${out.length} 条` } });
-  return { pois: dedupePois(out), failedCategories, usedMock, poiOk };
+  return { pois: dedupePois(out), failedCategories, poiSearch, quotaExhausted, usedMock, poiOk };
 }
 
 async function scanCrossings(
@@ -517,6 +585,11 @@ function exportJson() {
     persona: r.persona,
     minutes: r.minutes,
     generatedAt: r.generatedAt,
+    provenance: r.provenance,
+    poiSearch: r.poiSearch,
+    incompleteCategories: r.incompleteCategories,
+    incomplete: r.incomplete,
+    quotaExhausted: r.quotaExhausted,
     model: { dirs: r.model.dirs, probeM: r.model.probeM, factors: r.model.factors, radiusM: r.model.radiusM, degradedDirs: r.model.degradedDirs },
     score: r.score,
     checklist: r.checklist,

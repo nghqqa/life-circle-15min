@@ -44,13 +44,16 @@ export function createApiRouter(cfg: ServerConfig): Router {
     const hit = cache.get(key);
     if (hit) {
       res.set('X-Proxy-Cache', 'HIT');
-      res.json(hit);
+      res.set('X-Data-Collected-At', hit.collectedAt);
+      res.json(hit.body);
       return;
     }
     producer().then((result) => {
       const body = result.body;
-      if (result.ok && body && body.status === 0) cache.set(key, body);
+      const collectedAt = new Date().toISOString();
+      if (result.ok && body && body.status === 0) cache.set(key, { body, collectedAt });
       res.set('X-Proxy-Cache', 'MISS');
+      res.set('X-Data-Collected-At', collectedAt);
       res.status(200).json(body);
     });
   }

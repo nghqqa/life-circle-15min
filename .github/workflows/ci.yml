@@ -21,6 +21,10 @@ jobs:
         run: npm test
       - name: Build (web + server)
         run: npm run build
+      - name: Install browser for offline smoke tests
+        run: npx playwright install --with-deps chromium --only-shell
+      - name: Browser smoke tests (no API keys)
+        run: npm run test:browser
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

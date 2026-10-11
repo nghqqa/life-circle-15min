@@ -1,10 +1,12 @@
-import { CATEGORIES, PERSONA_MAP, THRESHOLDS } from './config.js';
+import { CATEGORIES, CORE_CATEGORIES, PERSONA_MAP, THRESHOLDS } from './config.js';
 import { buildChecklist } from './checklist.js';
 import { buildIsochroneModel, sampleBearings } from './isochrone.js';
 import { buildTimeField, contourPolylines, simplifyLine, sampleTimeNearest } from './timefield.js';
 import { analyzeGaps } from './gap.js';
 import { computeScore } from './scoring.js';
 import { dedupePois } from './poi.js';
+import { assessmentUnavailableCategories, isPoiQuotaError, legacyPoiSearchResult, poiSearchWarnings, unqueriedPoiSearch } from './poiSearch.js';
+import { createProvenance } from './provenance.js';
 import { planFacilitiesFromCoverage } from './planner.js';
 import { cumulativeOpportunities, interpolationAccuracy } from './cumulative.js';
 import { buildAnalysisWarnings } from './warnings.js';
@@ -14,6 +16,8 @@ import type {
   LatLng,
   PersonaId,
   Poi,
+  PoiSearchCompleteness,
+  PoiSearchResult,
   RouteProbe
 } from './types.js';
 
@@ -26,6 +30,7 @@ export interface AnalysisProvider {
   geocode(address: string): Promise<LatLng>;
   reverseGeocode(p: LatLng): Promise<string>;
   searchPoi(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<Poi[]>;
+  searchPoiDetailed?(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<PoiSearchResult>;
   routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]>;
 }
 
@@ -68,6 +73,7 @@ export interface AnalysisReport {
   persona: PersonaId;
   minutes: number;
   generatedAt: string;
+  provenance?: import('./provenance.js').AnalysisProvenance;
   degraded: boolean;
   model: {
     dirs: number;
@@ -97,7 +103,10 @@ export interface AnalysisReport {
   warnings: string[];
   /** 检索失败的类别（数量 0 属数据缺失而非真实结论） */
   failedCategories: CategoryId[];
-  /** true = 设施检索全部失败，报告为不完整结果（批量任务应计为失败） */
+  poiSearch: PoiSearchCompleteness[];
+  incompleteCategories: CategoryId[];
+  assessmentUnavailableCategories: CategoryId[];
+  /** true = 真实设施检索未完成或失败，报告不可冒充完整结果 */
   incomplete: boolean;
   /** true = 检索因上游配额耗尽被截断（incomplete 必为 true） */
   quotaExhausted: boolean;
@@ -221,32 +230,37 @@ export async function runAnalysis(
   t0 = Date.now();
   const pois: Poi[] = [];
   const tasks = CATEGORIES.flatMap((c) => c.keywords.map((kw) => ({ cat: c, kw })));
-  const perKw: Record<string, number> = {};
+  const poiSearch: PoiSearchCompleteness[] = [];
   const failedKw = new Set<string>();
   let quotaExhausted = false;
   for (const t of tasks) {
+    if (quotaExhausted) {
+      failedKw.add(t.kw);
+      poiSearch.push(unqueriedPoiSearch(t.kw, t.cat.id, 'server', 'skipped', true));
+      continue;
+    }
     try {
-      const found = await provider.searchPoi(t.kw, t.cat.id, center, searchRadiusM);
-      pois.push(...found);
-      perKw[t.kw] = found.length;
+      const found = provider.searchPoiDetailed
+        ? await provider.searchPoiDetailed(t.kw, t.cat.id, center, searchRadiusM)
+        : legacyPoiSearchResult(t.kw, t.cat.id, await provider.searchPoi(t.kw, t.cat.id, center, searchRadiusM));
+      pois.push(...found.pois);
+      poiSearch.push(found.completeness);
+      if (found.completeness.status === 'failed' || found.completeness.status === 'skipped') failedKw.add(t.kw);
+      quotaExhausted = found.completeness.quotaExhausted;
     } catch (err) {
-      perKw[t.kw] = 0;
       failedKw.add(t.kw);
       // 额度耗尽：后续检索必然失败，立即中止以保护配额
-      const msg = String((err as Error)?.message ?? err);
-      if (msg.includes('302') || msg.includes('配额') || msg.includes('daily') || msg.includes('限')) {
-        quotaExhausted = true;
-        break;
-      }
+      quotaExhausted = isPoiQuotaError(err);
+      poiSearch.push(unqueriedPoiSearch(t.kw, t.cat.id, 'server', 'failed', quotaExhausted));
     }
   }
   const cleaned = dedupePois(pois);
   // poiOk 只按【已评分设施】判定——住宅小区是人口代理，不能掩盖评分设施检索失败
   const scoredCats = CATEGORIES.filter((c) => c.scored);
-  const scoredFailed = scoredCats.filter((c) => c.keywords.every((kw) => failedKw.has(kw)));
-  const poiOk = scoredCats.some((c) => !scoredFailed.some((f) => f.id === c.id) && (perKw[c.keywords[0]] ?? 0) > 0);
-  // 数据被额度截断或全部失败 → 报告不完整（批量任务计为失败，不参与排名）
-  const incomplete = !poiOk || quotaExhausted;
+  // 可信、完整的 0 条也是有效检索，不能将“确实没有”误报为调用失败。
+  const poiOk = scoredCats.some((c) => poiSearch.some((s) => s.category === c.id && (s.status === 'complete' || s.legacy)));
+  const incompleteCategories = [...new Set(poiSearch.filter((s) => s.status !== 'complete' && !s.legacy).map((s) => s.category))];
+  const incomplete = !poiOk || quotaExhausted || incompleteCategories.length > 0;
   step(
     '设施 POI 检索',
     Date.now() - t0,
@@ -254,7 +268,7 @@ export async function runAnalysis(
     quotaExhausted
       ? '上游配额耗尽，检索中止'
       : incomplete
-        ? '全部已评分类别检索失败'
+        ? `检索不完整，已保留 ${cleaned.length} 条有效设施`
         : `共 ${cleaned.length} 条`
   );
 
@@ -264,17 +278,26 @@ export async function runAnalysis(
   const failedCategories = CATEGORIES.filter((c) => c.keywords.every((kw) => failedKw.has(kw))).map(
     (c) => c.id
   );
+  const unavailableCategories = assessmentUnavailableCategories(failedCategories, poiSearch);
   // 5) 盲区 + 评分 + 清单（失败类别按「无法判断」贯通）
   t0 = Date.now();
-  const gap = analyzeGaps(field, cleaned, { failedCategories });
-  const score = computeScore(center, cleaned, gap, { failedCategories });
-  const checklist = buildChecklist(center, cleaned, { failedCategories });
+  // 人口代理若未取全，不能以部分住宅作为完整分母计算“人口覆盖率”。
+  const gapPois = unavailableCategories.includes('residential') ? cleaned.filter((p) => p.category !== 'residential') : cleaned;
+  const gap = analyzeGaps(field, gapPois, { failedCategories: unavailableCategories });
+  // 三件套或人口分母任一数据未知时，不能把“可判定子集覆盖”呈现为三件套完整覆盖。
+  if (unavailableCategories.some((cat) => cat === 'residential' || CORE_CATEGORIES.includes(cat))) {
+    gap.coverageShare = null;
+    gap.severeShare = null;
+    gap.coverageUnavailable = true;
+  }
+  const score = computeScore(center, cleaned, gap, { failedCategories: unavailableCategories });
+  const checklist = buildChecklist(center, cleaned, { failedCategories: unavailableCategories });
   step('盲区识别与评分', Date.now() - t0, true, `总分 ${score.total}（${score.grade}）`);
 
   // 6) 补点规划
   t0 = Date.now();
   const planSites = planFacilitiesFromCoverage(gap, gap.coveredMasks, field, persona.speed, {
-    unknownCategories: failedCategories
+    unknownCategories: unavailableCategories
   });
   step('补点规划', Date.now() - t0, true, `${planSites.length} 条建议`);
 
@@ -295,16 +318,23 @@ export async function runAnalysis(
   if (quotaExhausted) {
     warnings.unshift('上游配额耗尽，部分或全部检索中止：本报告为不完整结果');
   }
+  warnings.push(...poiSearchWarnings(poiSearch));
+  const generatedAt = new Date().toISOString();
 
   return {
     center,
     centerName,
     persona: personaId,
     minutes,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
+    provenance: createProvenance({ generatedAt, poiSearch,
+      channels: [...new Set(poiSearch.map((s) => s.source))], mock: cleaned.some((p) => p.source === 'mock') }),
     degraded,
     warnings,
     failedCategories,
+    poiSearch,
+    incompleteCategories,
+    assessmentUnavailableCategories: unavailableCategories,
     incomplete,
     quotaExhausted,
     model: {

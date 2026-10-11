@@ -70,7 +70,7 @@ export class MapView {
     this.centerMarker = new BMapGL.Marker(pt, { icon: iconCenter() });
     this.map.addOverlay(this.centerMarker);
     if (label) {
-      const lbl = new BMapGL.Label(label, {
+      const lbl = new BMapGL.Label(escapeHtml(label), {
         position: pt,
         offset: new BMapGL.Size(14, -14)
       });
@@ -182,7 +182,7 @@ export class MapView {
         });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:180px"><b>${p.name}</b><br/><span style="color:#5a6478">${def.name} · ${p.address ?? ''}</span></div>`,
+            `<div style="font-size:13px;min-width:180px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span></div>`,
             { width: 220 }
           );
           map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
@@ -235,7 +235,7 @@ export class MapView {
         const marker = new BMapGL.Marker(pt, { icon: iconFor('#00bcd4', `补${site.rank}`) });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:220px"><b>规划建议 #${site.rank}：补建${catName(site.category)}</b><br/>${site.rationale}</div>`,
+            `<div style="font-size:13px;min-width:220px"><b>规划建议 #${site.rank}：补建${catName(site.category)}</b><br/>${escapeHtml(site.rationale)}</div>`,
             { width: 250 }
           );
           map.openInfoWindow(info, pt);
@@ -278,6 +278,10 @@ export class MapView {
 
 function catName(id: string): string {
   return CATEGORY_MAP[id as keyof typeof CATEGORY_MAP]?.name ?? id;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 /** 中心点图标：同心圆（生活圈母题），虚线外环 + 实心核 */

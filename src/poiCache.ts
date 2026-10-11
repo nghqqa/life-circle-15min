@@ -1,4 +1,4 @@
-import type { ChannelName, Poi } from '../shared/types.js';
+import type { CategoryId, ChannelName, Poi, PoiSearchResult } from '../shared/types.js';
 
 /**
  * 浏览器端 POI 结果缓存（localStorage，TTL 6 小时）：
@@ -58,4 +58,40 @@ export function setCachedPois(key: string, entry: CacheEntry): void {
   } catch {
     /* 存储满/不可用：缓存是 best-effort */
   }
+}
+
+const SEARCH_PREFIX = 'lc-poi-search-v1:';
+
+export function detailedSearchKey(keyword: string, center: { lat: number; lng: number }, radiusM: number,
+  category: CategoryId, channels: ChannelName[]): string {
+  // Do not reuse a rounded 100m cache for a different project center or gateway configuration.
+  return `${SEARCH_PREFIX}${JSON.stringify([keyword, center.lat, center.lng, radiusM, category, channels])}`;
+}
+
+export function getCachedSearch(key: string): PoiSearchResult | null {
+  try {
+    const entry = JSON.parse(localStorage.getItem(key) ?? 'null');
+    const value = entry?.value as PoiSearchResult | undefined;
+    if (!value || !Array.isArray(value.pois) || value.completeness?.status !== 'complete' ||
+      !Number.isFinite(entry.at) || Date.now() - entry.at > TTL || entry.at > Date.now()) return null;
+    if (!Number.isFinite(Date.parse(value.completeness.collectedAt)) ||
+      Date.now() - Date.parse(value.completeness.collectedAt) > TTL) return null;
+    return { ...value, completeness: { ...value.completeness, cacheHit: true } };
+  } catch { return null; }
+}
+
+export function setCachedSearch(key: string, value: PoiSearchResult): void {
+  if (value.completeness.status !== 'complete' || value.completeness.source === 'mock') return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), value }));
+    const entries: { key: string; at: number }[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(SEARCH_PREFIX)) continue;
+      try { entries.push({ key: k, at: JSON.parse(localStorage.getItem(k)!).at ?? 0 }); }
+      catch { /* Corrupt cache entries are ignored, never affect saved projects. */ }
+    }
+    entries.sort((a, b) => a.at - b.at);
+    for (const item of entries.slice(0, Math.max(0, entries.length - MAX_ENTRIES))) localStorage.removeItem(item.key);
+  } catch { /* Cache is optional; project save errors are reported separately. */ }
 }

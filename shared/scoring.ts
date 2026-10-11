@@ -105,14 +105,16 @@ export function computeScore(
     (a, b) => a.completeness * CATEGORY_MAP[a.category].weight - b.completeness * CATEGORY_MAP[b.category].weight
   )[0];
   const summaryParts: string[] = [];
-  if (missingDataNames.length) summaryParts.push(`检索失败（数据缺失，无法判断）：${missingDataNames.join('、')}`);
+  if (missingDataNames.length) summaryParts.push(`检索失败或不完整（数据缺失，无法判断）：${missingDataNames.join('、')}`);
   if (gap.unknownCategories?.length) {
     const names = gap.unknownCategories.map((c) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c);
     summaryParts.push(
-      `「${names.join('、')}」检索失败，覆盖率仅按已判定 ${3 - gap.unknownCategories.length} 类计算（未知 ≠ 覆盖成功）`
+      gap.coverageShare == null
+        ? `「${names.join('、')}」检索失败或不完整，三件套完整覆盖率无法评估`
+        : `「${names.join('、')}」检索失败或不完整，覆盖率仅按已判定 ${3 - gap.unknownCategories.length} 类计算（未知 ≠ 覆盖成功）`
     );
   }
-  if (zeroCats.length) summaryParts.push(`确认圈内没有：${zeroCats.join('、')}`);
+  if (zeroCats.length) summaryParts.push(`检索范围内未查得：${zeroCats.join('、')}`);
   if (gap.patches.length) {
     const top = gap.patches[0];
     summaryParts.push(
