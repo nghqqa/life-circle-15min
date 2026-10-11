@@ -13,3 +13,4 @@ server.log
 test-results/
 playwright-report/
 .share-store.json
+.test-share-store.json
