@@ -10,6 +10,7 @@ import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint }
 import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
 import { explainResult } from './explain.js';
 import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
+import { listCorrections } from './corrections.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
 
@@ -120,7 +121,11 @@ export function render() {
   switch (currentTab) {
     case 'report':
       if (!r) { body.innerHTML = '<div class="empty-tip">先完成一次体检</div>'; break; }
-      body.innerHTML = reportHtml(r); animateGrade(r.score.total); renderCharts(r);
+      const corr = listCorrections();
+      body.innerHTML = reportHtml(r) + (corr.length
+        ? `<div class="rpt-sub" style="margin-top:8px">现场纠错标注 ${corr.length} 条（如已核验/停业/迁移/分类错误）。<b>口径说明：人工标注仅作现场记录，未计入评分与统计</b>——避免单人主观修改统计口径；可在地图设施弹窗撤销，导出 JSON 随附全部记录。</div>`
+        : '');
+      animateGrade(r.score.total); renderCharts(r);
       break;
     case 'checklist': if (r) body.innerHTML = checklistHtml(r); break;
     case 'gaps': if (r) body.innerHTML = gapsHtml(r); break;
