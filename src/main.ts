@@ -643,6 +643,9 @@ async function analyze() {
     if (supps.length) {
       warnings.push(`含人工补录住宅样本 ${supps.length} 条（来源为用户自填，名称带(补录)后缀），已并入住宅采样与覆盖率；真实人口口径未接入（无普查数据），不与样本口径混用。`);
     }
+    if (accuracy && accuracy.samples > 0 && accuracy.maePercent >= 30) {
+      warnings.push(`插值精度自证误差偏高（MAE ${accuracy.maeMinutes} 分钟 / ${accuracy.maePercent}%，最大 ${accuracy.worstPercent}%）：高误差扇区（多为强阻隔方向）的时间场估计偏差较大，相关圈内结论建议实地核验后再用于决策。`);
+    }
     if (quotaExhausted) warnings.unshift('已停止后续检索与过街扫描，避免继续消耗配额。');
     const generatedAt = new Date().toISOString();
     const mock = pre.channel === 'mock' || rm.channel === 'mock' || poiUsedMock;

@@ -479,3 +479,15 @@ test('样本补录：登记去重提示、并入下一次体检并在警告中�
   expect(report.score.total).toBe(75); // 补录并入后覆盖率提升：C74 → B75
 });
 
+
+test('老年口径报告含老年友好解读与口径边界说明', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  await page.locator('#persona').selectOption('elderly');
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 20_000 });
+  await page.locator('[data-tab="report"]').click();
+  await expect(page.locator('#panel-body')).toContainText('老年友好解读');
+  await expect(page.locator('#panel-body')).toContainText('无障碍能力需实地核验');
+});
+
