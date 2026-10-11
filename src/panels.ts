@@ -843,9 +843,8 @@ function streetHtml(): string {
   <div id="street-jobs" class="rpt-sub" style="margin-top:8px"></div>`;
 }
 
-function wireStreet() {
-  // №12 任务找回/续跑：列出最近任务；运行中可找回轮询，中断/失败可续跑剩余样本
-  void (async () => {
+async function refreshJobList() {
+  {
     const el = document.getElementById('street-jobs');
     if (!el) return;
     try {
@@ -878,7 +877,12 @@ function wireStreet() {
         } catch { banner('续跑请求失败，请稍后重试。'); }
       }));
     } catch { /* 演示模式无此端点 */ }
-  })();
+  }
+}
+
+function wireStreet() {
+  // №12 任务找回/续跑：列出最近任务；运行中可找回轮询，中断/失败可续跑剩余样本
+  void refreshJobList();
 
   const scopeSel = document.getElementById('street-scope') as HTMLSelectElement | null;
   scopeSel?.addEventListener('change', () => {
@@ -938,7 +942,7 @@ async function refreshUsageLine() {
   const el = document.getElementById('street-usage');
   if (!el) return;
   try {
-    const res = await fetch('/api/usage');
+    const res = await fetch('/api/baidu/usage');
     const data = await res.json();
     const u = data.usage;
     if (!u) return;
@@ -970,6 +974,7 @@ function startPolling() {
       if (data.job.status !== 'running' && streetPollTimer) {
         clearInterval(streetPollTimer);
         streetPollTimer = null;
+        void refreshJobList();
         if (data.job.status === 'done' && map.ready && data.job.communities?.length) {
           map.setBatchResults(data.job.communities);
           const last = data.job.communities[data.job.communities.length - 1];

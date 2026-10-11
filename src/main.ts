@@ -223,42 +223,32 @@ function buildLegend() {
 function bindUi() {
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 
-  // 设施「步行路线核验」按钮：地图弹窗/任何 data-route-uid 元素统一走此委托
-  document.body.addEventListener('click', (event) => {
-    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-route-uid]') : null;
-    if (el?.dataset.routeUid) void verifyRouteToPoi(el.dataset.routeUid);
-  });
-
-  // №16 设施「营业时段」核验：按需查一次 POI 详情，商户申报缺失时如实报「未知」
-  document.body.addEventListener('click', (event) => {
-    const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-hours-uid]') : null;
-    if (!el?.dataset.hoursUid) return;
-    const uid = el.dataset.hoursUid;
-    const poi = state.result?.pois.find((p) => p.uid === uid);
-    if (!state.hasServerAk) {
-      banner('演示模式无营业时间数据：状态未知，未知 ≠ 全天营业。');
+  // POI 弹窗动作统一入口：BMapGL 弹窗容器会 stopPropagation，body 委托收不到；
+  // 弹窗内按钮改走 inline onclick → window.__lcPoiAct；弹窗外元素仍走此委托
+  const poiAction = (ds: DOMStringMap) => {
+    if (ds.routeUid) { void verifyRouteToPoi(ds.routeUid); return; }
+    if (ds.hoursUid) {
+      const uid = ds.hoursUid;
+      const poi = state.result?.pois.find((p) => p.uid === uid);
+      if (!state.hasServerAk) {
+        banner('演示模式无营业时间数据：状态未知，未知 ≠ 全天营业。');
+        return;
+      }
+      banner('正在查询商户申报的营业时间…', 'info', 6000);
+      fetch(`/api/baidu/place/v2/detail?uid=${encodeURIComponent(uid)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          const raw: string | undefined = data?.result?.detail_info?.open_time ?? data?.result?.open_time;
+          const parsed = parseOpenHours(raw);
+          const name = poi?.name ?? '该设施';
+          const label = parsed.status === 'open' ? '营业中' : parsed.status === 'closed' ? '当前未营业' : '营业时间未知';
+          banner(`${name}：${label}（${parsed.note}）`, parsed.status === 'unknown' ? 'warn' : 'info', 10000);
+        })
+        .catch(() => banner('营业时段查询失败：商户申报数据不可用，状态保持未知。'));
       return;
     }
-    banner('正在查询商户申报的营业时间…', 'info', 6000);
-    fetch(`/api/baidu/place/v2/detail?uid=${encodeURIComponent(uid)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        const raw: string | undefined = data?.result?.detail_info?.open_time ?? data?.result?.open_time;
-        const parsed = parseOpenHours(raw);
-        const name = poi?.name ?? '该设施';
-        const label = parsed.status === 'open' ? '营业中' : parsed.status === 'closed' ? '当前未营业' : '营业时间未知';
-        banner(`${name}：${label}（${parsed.note}）`, parsed.status === 'unknown' ? 'warn' : 'info', 10000);
-      })
-      .catch(() => banner('营业时段查询失败：商户申报数据不可用，状态保持未知。'));
-  });
-
-  // №10 设施纠错标注：append-only 登记，仅作现场标注未计入评分（口径明示）
-  document.body.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target : null;
-    const saveBtn = target?.closest<HTMLElement>('[data-corr-save]');
-    const undoBtn = target?.closest<HTMLElement>('[data-corr-undo-uid]');
-    if (saveBtn) {
-      const uid = saveBtn.dataset.corrSave!;
+    if (ds.corrSave) {
+      const uid = ds.corrSave;
       const status = (document.querySelector(`[data-corr-status="${uid}"]`) as HTMLSelectElement)?.value as CorrectionStatus;
       const note = (document.querySelector(`[data-corr-note="${uid}"]`) as HTMLInputElement)?.value ?? '';
       const poi = state.result?.pois.find((p) => p.uid === uid);
@@ -266,11 +256,17 @@ function bindUi() {
       if (rec) banner(`已标注「${poi?.name ?? uid}」：${status}。标注仅作现场记录，未计入评分；可随时撤销。`, 'info', 10000);
       return;
     }
-    if (undoBtn) {
-      const uid = undoBtn.dataset.corrUndoUid!;
-      const left = undoCorrection(uid);
+    if (ds.corrUndoUid) {
+      const left = undoCorrection(ds.corrUndoUid);
       banner(left ? '已撤销最新一条标注，历史可继续回退。' : '标注已全部撤销。', 'info');
     }
+  };
+  (window as unknown as Record<string, unknown>).__lcPoiAct = (el: HTMLElement) => poiAction(el.dataset);
+  document.body.addEventListener('click', (event) => {
+    const el = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('[data-route-uid],[data-hours-uid],[data-corr-save],[data-corr-undo-uid]')
+      : null;
+    if (el) poiAction(el.dataset);
   });
 
   $('btn-analyze').addEventListener('click', () => analyze().catch((e) => {
@@ -395,10 +391,10 @@ function bindUi() {
     if (!state.result) return;
     banner('正在创建只读分享…', 'info', 6000);
     try {
-      const res = await fetch('/api/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.result) });
+      const res = await fetch('/api/baidu/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.result) });
       const data = await res.json();
       if (data.status !== 0) { banner(`分享失败：${data.message ?? '未知错误'}`); return; }
-      const url = `${location.origin}/s/${data.id}`;
+      const url = `${location.origin}/api/baidu/share/${data.id}`;
       try { await navigator.clipboard.writeText(url); banner(`只读分享已创建并复制链接：${url}（固定版本快照，无交互；存储上限 100 份 FIFO）`, 'info', 12000); }
       catch { banner(`只读分享已创建：${url}（固定版本快照，无交互）`, 'info', 12000); }
     } catch (err) {
@@ -717,7 +713,7 @@ async function analyze() {
     switchTab('report');
     projects?.analysisCompleted();
     hud.note(`完成：总分 ${score.total}（${score.grade}），发现 ${gap.patches.length} 个灰色区域，给出 ${planSites.length} 条补点建议`);
-    void fetch('/api/usage').then((res) => res.json()).then((data) => {
+    void fetch('/api/baidu/usage').then((res) => res.json()).then((data) => {
       const u = data?.usage;
       if (u) hud.note(`今日上游请求 ${u.requests.total}${u.dailyBudget > 0 ? `/${u.dailyBudget}` : ''} · 缓存命中 ${u.cacheHits} · 本地进程计数，非平台账户余额${u.overBudget ? ' · 已触顶暂停' : ''}`);
     }).catch(() => { /* 演示模式无此端点 */ });
