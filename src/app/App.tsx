@@ -13,20 +13,24 @@ const TABS = [
   { key: 'compare', label: '方案对比' },
   { key: 'street', label: '街道体检' },
   { key: 'log', label: '运行日志' }
-];
+].map((t) => ({ ...t, label: <span data-tab={t.key}>{t.label}</span> }));
 
 export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [mapType, setMapType] = useState<'2d' | 'satellite' | '3d'>('2d');
+  const [activeTab, setActiveTab] = useState('report');
   const collapseRef = useRef<((side: 'left' | 'right') => void) | null>(null);
 
   useEffect(() => {
+    const onTab = (e: Event) => setActiveTab((e as CustomEvent<string>).detail);
+    window.addEventListener('lc:tab', onTab);
     collapseRef.current = ui.collapseInit();
     renderPanel();
     void init().catch((e) => {
       console.error(e);
       banner(`初始化失败：${(e as Error).message}`);
     });
+    return () => window.removeEventListener('lc:tab', onTab);
   }, []);
 
   return (
@@ -143,7 +147,7 @@ export default function App() {
 
         <section id="panel">
           <nav id="panel-tabs">
-            <Tabs defaultActiveKey="report" size="small" onChange={(k) => ui.selectTab(k)} items={TABS} />
+            <Tabs activeKey={activeTab} size="small" onChange={(k) => { setActiveTab(k); ui.selectTab(k); }} items={TABS} />
           </nav>
           <div id="panel-body">
             <div className="empty-tip">选择中心点后点击「开始体检」</div>

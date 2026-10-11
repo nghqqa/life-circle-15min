@@ -99,6 +99,7 @@ export function switchTab(tab: string) {
   document.querySelectorAll('#panel-tabs button').forEach((b) => {
     b.classList.toggle('on', (b as HTMLElement).dataset.tab === tab);
   });
+  window.dispatchEvent(new CustomEvent('lc:tab', { detail: tab }));
   render();
 }
 
