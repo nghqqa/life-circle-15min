@@ -289,7 +289,7 @@ function gapsHtml(r: AnalysisResult): string {
       <td>#${p.id} ${p.severity === 'severe' ? '<span class="pill bad">重度</span>' : '<span class="pill mid">中度</span>'}</td>
       <td>${p.missingCats.map((c) => CATEGORY_MAP[c].name).join('、')}</td>
       <td class="num">${(p.weightShare * 100).toFixed(0)}%</td>
-      <td class="num">${p.maxNearestM > 0 ? p.maxNearestM + 'm' : '无'}</td>
+      <td class="num">${p.maxNearestM > 0 ? Math.round(p.maxNearestM) + 'm' : '无'}</td>
       <td><button class="btn ghost plan-loc" data-fly="${p.centroid.lat},${p.centroid.lng}">定位</button></td>
     </tr>`
     )
