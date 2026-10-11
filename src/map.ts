@@ -44,6 +44,10 @@ export class MapView {
       this.map.addControl(new BMapGL.ScaleControl());
       this.map.addControl(new BMapGL.NavigationControl3D());
       this.ready = true;
+      // 缩放结束后按新级别重渲染设施标注（低级别聚合、高级别展开）
+      this.map.addEventListener('zoomend', () => {
+        if (this.visible.poi && this.data.pois) this.renderLayer('poi');
+      });
       if (onPick) {
         this.map.addEventListener('click', (e: any) => {
           if (e.latlng) onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
@@ -269,9 +273,52 @@ export class MapView {
     }
 
     if (key === 'poi' && this.data.pois) {
-      const poiList = this.data.pois as Poi[];
+      const poiList = (this.data.pois as Poi[]).filter((p) => p.category !== 'residential');
+      const zoom = (() => { try { const z = this.map.getZoom?.(); return typeof z === 'number' ? z : 16; } catch { return 16; } })();
+      // 低缩放级别：网格聚合（~60px 视口网格），标注数量，点击放大展开——避免数百标注糊满地图
+      if (zoom < 16) {
+        const cellDeg = 0.004 * Math.pow(2, 15 - zoom);
+        const groups = new Map<string, { lng: number; lat: number; count: number; sample: Poi }>();
+        for (const p of poiList) {
+          const gk = `${Math.floor(p.lng / cellDeg)}:${Math.floor(p.lat / cellDeg)}`;
+          const g = groups.get(gk);
+          if (g) g.count += 1;
+          else groups.set(gk, { lng: p.lng, lat: p.lat, count: 1, sample: p });
+        }
+        for (const g of groups.values()) {
+          const pt = new BMapGL.Point(g.lng, g.lat);
+          if (g.count === 1) {
+            const p = g.sample;
+            const def = CATEGORY_MAP[p.category];
+            const marker = new BMapGL.Marker(pt, { icon: iconFor(def.color, def.name.slice(0, 1)) });
+            marker.addEventListener('click', () => {
+              const info = new BMapGL.InfoWindow(
+                `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/>
+                <button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">步行路线核验</button> <button class="btn ghost" data-hours-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">营业时段</button>
+                <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+                  <select data-corr-status="${escapeHtml(p.uid)}" style="font-size:12px;height:24px">
+                    <option>已核验</option><option>停业</option><option>迁移</option><option>分类错误</option>
+                  </select>
+                  <input data-corr-note="${escapeHtml(p.uid)}" placeholder="说明(可空)" style="font-size:12px;width:90px;height:24px">
+                  <button class="btn ghost" data-corr-save="${escapeHtml(p.uid)}" data-corr-name="${escapeHtml(p.name)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="font-size:12px;padding:2px 6px">标注</button>
+                  <button class="btn ghost" data-corr-undo-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="font-size:12px;padding:2px 6px">撤销标注</button>
+                </div></div>`,
+                { width: 240 }
+              );
+              map.openInfoWindow(info, pt);
+            });
+            map.addOverlay(marker);
+            this.overlays.poi.push(marker);
+          } else {
+            const marker = new BMapGL.Marker(pt, { icon: iconFor('#334155', String(g.count), 30) });
+            marker.addEventListener('click', () => { this.flyTo({ lat: g.lat, lng: g.lng }, Math.min(18, zoom + 2)); });
+            map.addOverlay(marker);
+            this.overlays.poi.push(marker);
+          }
+        }
+      } else {
+      // 高缩放级别：逐个设施标注（含详情弹窗）
       for (const p of poiList) {
-        if (p.category === 'residential') continue;
         const def = CATEGORY_MAP[p.category];
         const marker = new BMapGL.Marker(new BMapGL.Point(p.lng, p.lat), {
           icon: iconFor(def.color, def.name.slice(0, 1))
@@ -295,6 +342,7 @@ export class MapView {
         map.addOverlay(marker);
         this.overlays.poi.push(marker);
       }
+      } // 高缩放分支结束
       // 住宅小区用小圆点展示（人口代理）
       for (const p of poiList.filter((x: Poi) => x.category === 'residential')) {
         const marker = new BMapGL.Marker(new BMapGL.Point(p.lng, p.lat), {
