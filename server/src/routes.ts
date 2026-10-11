@@ -183,11 +183,6 @@ export function createApiRouter(cfg: ServerConfig): Router {
     );
   });
 
-  // №13 调用预算面板：本地进程计数（非平台账户余额），每日预算触顶自动暂停上游调用
-  router.get('/usage', (_req, res) => {
-    res.json({ status: 0, usage: usageSnapshot() });
-  });
-
   router.get('/stats', (_req, res) => {
     res.json({
       status: 0,

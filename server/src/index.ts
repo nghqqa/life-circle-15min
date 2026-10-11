@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { createApiRouter, createAnalysisRouter } from './routes.js';
 import { IpLimiter } from './ratelimit.js';
 import { renderShareHtml, saveShare } from './share.js';
+import { usageSnapshot } from './usage.js';
 
 const cfg = loadConfig();
 const app = express();
@@ -55,6 +56,11 @@ app.post('/api/share', (req, res) => {
 
 app.get('/s/:id', (req, res) => {
   res.send(renderShareHtml(String(req.params.id)));
+});
+
+// №13 调用预算面板：本地进程计数（非平台账户余额）
+app.get('/api/usage', (_req, res) => {
+  res.json({ status: 0, usage: usageSnapshot() });
 });
 
 // 生产模式：托管前端构建产物
