@@ -37,6 +37,7 @@ import { assessmentUnavailableCategories, poiSearchWarnings, unqueriedPoiSearch,
 import type { PoiSearchCompleteness } from '../shared/types.js';
 import type { ProjectSnapshot } from './projects.js';
 import { openPrintableReport, downloadText, facilityCsv } from './exports.js';
+import { addCorrection, listCorrections, undoCorrection, type CorrectionStatus } from './corrections.js';
 
 // ---------- 全局状态 ----------
 
@@ -169,6 +170,27 @@ function buildLegend() {
 
 function bindUi() {
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
+
+  // №10 设施纠错标注：append-only 登记，仅作现场标注未计入评分（口径明示）
+  document.body.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const saveBtn = target?.closest<HTMLElement>('[data-corr-save]');
+    const undoBtn = target?.closest<HTMLElement>('[data-corr-undo-uid]');
+    if (saveBtn) {
+      const uid = saveBtn.dataset.corrSave!;
+      const status = (document.querySelector(`[data-corr-status="${uid}"]`) as HTMLSelectElement)?.value as CorrectionStatus;
+      const note = (document.querySelector(`[data-corr-note="${uid}"]`) as HTMLInputElement)?.value ?? '';
+      const poi = state.result?.pois.find((p) => p.uid === uid);
+      const rec = addCorrection(uid, poi?.name ?? '', poi ? { lat: poi.lat, lng: poi.lng } : { lat: 0, lng: 0 }, poi?.source ?? 'unknown', status, note);
+      if (rec) banner(`已标注「${poi?.name ?? uid}」：${status}。标注仅作现场记录，未计入评分；可随时撤销。`, 'info', 10000);
+      return;
+    }
+    if (undoBtn) {
+      const uid = undoBtn.dataset.corrUndoUid!;
+      const left = undoCorrection(uid);
+      banner(left ? '已撤销最新一条标注，历史可继续回退。' : '标注已全部撤销。', 'info');
+    }
+  });
 
   $('btn-analyze').addEventListener('click', () => analyze().catch((e) => {
     console.error(e);
@@ -612,6 +634,7 @@ function exportJson() {
     warnings: r.warnings,
     failedCategories: r.failedCategories,
     workbench: getWorkbenchState(),
+    corrections: listCorrections(),
     gap: {
       blindPoints: r.gap.blindPoints,
       coverageShare: r.gap.coverageShare,
