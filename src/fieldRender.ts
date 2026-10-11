@@ -10,6 +10,8 @@ export function fieldToDataUrl(f: TimeField, size = 640, alpha = 0.52): string {
   const n = f.n;
   const img = new Uint8ClampedArray(n * n * 4);
   const fadeSpan = 7;
+  // 外接方形网格边缘羽化：距图边 ~6% 内 alpha 线性衰减到 0，避免露出正方形边界
+  const featherCells = Math.max(2, Math.round(n * 0.06));
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       const t = f.t[i * n + j];
@@ -25,6 +27,8 @@ export function fieldToDataUrl(f: TimeField, size = 640, alpha = 0.52): string {
       // 圈内全强度；圈外 7 分钟内线性渐隐
       let a = alpha;
       if (t > f.minutes) a = alpha * Math.max(0, 1 - (t - f.minutes) / fadeSpan);
+      const edge = Math.min(i, j, n - 1 - i, n - 1 - j);
+      if (edge < featherCells) a *= edge / featherCells;
       img[o + 3] = Math.round(255 * a);
     }
   }
