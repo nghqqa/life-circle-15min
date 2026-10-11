@@ -313,3 +313,14 @@ test('批量任务取消、失败提示和再次发起可用，导出失败不�
   await expect(page.locator('#banner')).toContainText('薄弱社区表导出失败');
   await expect(page.locator('#street-status')).toContainText(community.name);
 });
+
+test('老年口径报告含老年友好解读与口径边界说明', async ({ page }) => {
+  await page.goto('/');
+  await importFixture(page);
+  await page.locator('#persona').selectOption('elderly');
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 20_000 });
+  await page.locator('[data-tab="report"]').click();
+  await expect(page.locator('#panel-body')).toContainText('老年友好解读');
+  await expect(page.locator('#panel-body')).toContainText('无障碍能力需实地核验');
+});
