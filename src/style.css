@@ -183,6 +183,31 @@ select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 
 .ph-text { color: var(--ink-2); font-size: 13px; line-height: 1.9; }
 .ph-text b { color: var(--warn); }
 
+/* ---------- 地图控件：形态切换 / 右键菜单 ---------- */
+#map-type-switch {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 20;
+  display: inline-flex; background: var(--card); border: 1px solid var(--line-2); border-radius: var(--radius-s);
+  overflow: hidden;
+}
+#map-type-switch button {
+  border: none; background: transparent; padding: 6px 14px; font-size: 12px; font-family: var(--font);
+  color: var(--ink-2); cursor: pointer; border-right: 1px solid var(--line);
+}
+#map-type-switch button:last-child { border-right: none; }
+#map-type-switch button:hover { color: var(--accent); }
+#map-type-switch button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+#ctx-menu {
+  position: absolute; z-index: 40; min-width: 168px;
+  background: var(--card); border: 1px solid var(--line-2); border-radius: var(--radius-s);
+  padding: 4px; font-size: 13px;
+}
+#ctx-menu button {
+  display: block; width: 100%; border: none; background: none; text-align: left;
+  padding: 7px 10px; border-radius: 6px; font-size: 13px; font-family: var(--font); color: var(--ink); cursor: pointer;
+}
+#ctx-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+
 /* ---------- 右侧面板 ---------- */
 #panel {
   width: 396px; flex: 0 0 auto; background: var(--card); border-left: 1px solid var(--line);
