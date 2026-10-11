@@ -8,6 +8,7 @@ import { map } from './main.js';
 import type { WorkbenchSnapshot } from './projects.js';
 import { APPLICATION_VERSION, ALGORITHM_VERSION, RULE_VERSION, ruleFingerprint } from '../shared/provenance.js';
 import { captureScenario, comparisonBaseline, type PlanScenarios } from '../shared/comparison.js';
+import { explainResult } from './explain.js';
 import { comparisonTable, downloadText, weakCommunityCsv } from './exports.js';
 
 /** 右侧报告面板：体检报告 / 国标清单 / 灰色区域 / 规划建议 / 街道体检 / 运行日志 */
@@ -229,6 +230,7 @@ function reportHtml(r: AnalysisResult): string {
       ? `<div class="rpt-sub">扫描 ${r.crossings.scanned} 条步行路段：过街天桥 ${r.crossings.overpass} 处 · 地下通道 ${r.crossings.underpass} 处 · 平面过街提示 ${r.crossings.crosswalkHint} 处。<br/>过街设施影响老年人等人群的实际步行可达性，已纳入速度折减。</div>`
       : '<div class="rpt-sub">未启用过街设施扫描。</div>'
   }
+  ${explainResult(r).map((e) => `<div class="rpt-summary"><span class="sum-label">解读</span><b>${escapeHtml(e.title)}</b> —— ${escapeHtml(e.text)}</div>`).join('')}
   `;
 }
 
