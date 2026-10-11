@@ -853,9 +853,13 @@ async function refreshJobList() {
       const jobs: any[] = data.jobs ?? [];
       if (!jobs.length) { el.textContent = ''; return; }
       el.innerHTML = '最近任务：' + jobs.slice(0, 3).map((j) => {
-        const label = `${escapeHtml(j.centerName)}（${j.done}/${j.total} · ${j.status === 'running' ? '运行中' : j.status === 'queued' ? '排队中' : j.status === 'interrupted' ? '已中断' : j.status === 'error' ? '失败' : j.status === 'cancelled' ? '已取消' : '完成'}）`;
-        const find = j.status === 'running' || j.status === 'queued'
-          ? `<button class="btn ghost" data-jobfind="${j.id}" style="font-size:12px;padding:2px 6px">找回</button>` : '';
+        const statusLabel = j.status === 'running' ? '运行中'
+          : j.status === 'queued' ? `排队中${j.queuePosition ? `（第 ${j.queuePosition} 位）` : ''}`
+          : j.status === 'interrupted' ? '已中断' : j.status === 'error' ? '失败'
+          : j.status === 'cancelled' ? '已取消' : '完成';
+        const label = `${escapeHtml(j.centerName)}（${j.done}/${j.total} · ${statusLabel}）`;
+        // 全部状态都可查看：完成后刷新页面也能找回结果
+        const find = `<button class="btn ghost" data-jobfind="${j.id}" style="font-size:12px;padding:2px 6px">${j.status === 'done' ? '查看结果' : '找回'}</button>`;
         const resume = ['interrupted', 'error', 'cancelled'].includes(j.status)
           ? `<button class="btn ghost" data-jobresume="${j.id}" style="font-size:12px;padding:2px 6px">续跑剩余</button>` : '';
         return `${label} ${find}${resume}`;
@@ -904,6 +908,19 @@ function wireStreet() {
     const addr = (document.getElementById('street-addr') as HTMLInputElement)?.value.trim();
     if (!addr) { banner('请先输入街道 / 片区地址', 'warn'); return; }
     const scope = (document.getElementById('street-scope') as HTMLSelectElement)?.value ?? 'street';
+    // 防抖：同地址已有运行/排队任务 → 直接找回，不重复排队
+    try {
+      const jr = await fetch('/api/batch/jobs');
+      const jd = await jr.json();
+      const dup = (jd.jobs ?? []).find((j: any) => j.centerName === addr && (j.status === 'running' || j.status === 'queued'));
+      if (dup) {
+        banner(`相同地址的任务已在${dup.status === 'running' ? '运行' : `队列中（第 ${dup.queuePosition ?? '?'} 位）`}，已为你切换到该任务，无需重复发起。`, 'info', 10000);
+        streetJobId = dup.id;
+        startPolling();
+        void refreshJobList();
+        return;
+      }
+    } catch { /* 列表不可用时不拦截 */ }
     btn.classList.add('btn-busy');
     btn.textContent = '提交中…';
     try {

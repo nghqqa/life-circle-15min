@@ -5,7 +5,7 @@ import { TtlCache } from './cache.js';
 import { countCacheHit, usageSnapshot } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
-import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, resumeStreetBatch } from './batch.js';
+import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, queuePosition, resumeStreetBatch } from './batch.js';
 import { escapeHtml as esc, getShare, saveShare } from './share.js';
 
 /**
@@ -332,7 +332,7 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
   // GET /api/batch/status/:jobId → 任务进度与结果
   // №12 任务找回/续跑/失败重试
   router.get('/batch/jobs', (_req, res) => {
-    res.json({ status: 0, jobs: listJobs().map((j) => ({ id: j.id, status: j.status, centerName: j.centerName, createdAt: j.createdAt, done: j.done, total: j.total })) });
+    res.json({ status: 0, jobs: listJobs().map((j) => ({ id: j.id, status: j.status, centerName: j.centerName, createdAt: j.createdAt, done: j.done, total: j.total, queuePosition: queuePosition(j.id) })) });
   });
   router.post('/batch/resume', (req, res) => {
     const { jobId, mode } = req.body ?? {};

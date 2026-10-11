@@ -497,6 +497,12 @@ export function resumeStreetBatch(ak: string, prevId: string, mode: 'remaining' 
 }
 
 /** 列出任务（内存 + 持久化文件），供「任务找回」 */
+/** 排队位次（1 起）；非排队任务返回 null */
+export function queuePosition(id: string): number | null {
+  const idx = pendingQueue.findIndex((j) => j.id === id);
+  return idx === -1 ? null : idx + 1;
+}
+
 export function listJobs(): BatchJob[] {
   const all = new Map<string, BatchJob>();
   try {
