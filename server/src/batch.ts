@@ -6,7 +6,31 @@ import { analyzeWithServerProvider } from './provider.js';
 import { buckets, callBaidu } from './baidu.js';
 import { TtlCache } from './cache.js';
 import { overBudget } from './usage.js';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
+// №12 任务持久化：跨重启可找回/续跑；运行中任务在重启后标记为 interrupted
+const PERSIST_PATH = path.resolve(process.env.BATCH_PERSIST_FILE ?? '.batch-jobs.json');
+function persistJob(job: BatchJob) {
+  try {
+    const all = existsSync(PERSIST_PATH) ? JSON.parse(readFileSync(PERSIST_PATH, 'utf8')) : {};
+    all[job.id] = {
+      id: job.id, status: job.status, createdAt: job.createdAt, centerName: job.centerName,
+      center: job.center, radiusM: job.radiusM, maxCommunities: job.total,
+      scope: (job as BatchJob & { scope?: string }).scope, persona: (job as BatchJob & { persona?: string }).persona,
+      done: job.done, total: job.total, communities: job.communities, summary: job.summary, error: job.error,
+      samples: (job as BatchJob & { samples?: Poi[] }).samples
+    };
+    writeFileSync(PERSIST_PATH, JSON.stringify(all));
+  } catch { /* 持久化失败不影响任务本身 */ }
+}
+function loadPersisted(jobId: string): (BatchJob & { scope?: string; persona?: string; samples?: Poi[] }) | null {
+  try {
+    if (!existsSync(PERSIST_PATH)) return null;
+    const all = JSON.parse(readFileSync(PERSIST_PATH, 'utf8'));
+    return all[jobId] ?? null;
+  } catch { return null }
+}
 /**
  * 街道级批量体检：以街道中心为圆心检索住宅小区作为采样点，
  * 逐个执行完整体检（服务端引擎），聚合成街道排名。
@@ -42,7 +66,7 @@ export interface StreetGroup {
 
 export interface BatchJob {
   id: string;
-  status: 'running' | 'done' | 'error' | 'cancelled';
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'queued' | 'interrupted';
   createdAt: number;
   centerName: string;
   center: LatLng;
@@ -69,11 +93,30 @@ export interface BatchJob {
   } | null;
   cancelled?: boolean;
   error?: string;
+  /** №12 采样点（续跑依据），持久化时一并保存 */
+  samples?: Poi[];
+  maxCommunities?: number;
+  scope?: 'street' | 'district';
   /** F7：本任务的人群口径（随结果持久化，脱离页面可还原） */
   persona?: 'adult' | 'elderly' | 'child';
 }
 
 const jobs = new Map<string, BatchJob>();
+
+(function restoreOnBoot() {
+  try {
+    if (!existsSync(PERSIST_PATH)) return;
+    const all = JSON.parse(readFileSync(PERSIST_PATH, 'utf8'));
+    for (const j of Object.values<any>(all)) {
+      if (j.status === 'running' || j.status === 'queued') {
+        j.status = 'interrupted';
+        j.error = '服务重启导致任务中断，可续跑（已完成结果保留）';
+        persistJob(j as BatchJob);
+      }
+      jobs.set(j.id, j as BatchJob);
+    }
+  } catch { /* 损坏的持久化文件直接忽略 */ }
+})();
 
 function jobId(): string {
   return `bj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -202,29 +245,63 @@ export function startStreetBatch(
     communities: [],
     summary: null
   };
+  job.maxCommunities = maxCommunities;
+  (job as BatchJob & { scope?: 'street' | 'district' }).scope = scope;
   (job as BatchJob & { persona?: 'adult' | 'elderly' | 'child' }).persona = persona;
+  jobAk.set(job, ak);
   jobs.set(job.id, job);
+  persistJob(job);
+  // №12 全局低并发排队：同一时刻仅一个批量任务执行，其余排队自动接续
+  if (activeJob && activeJob.status === 'running') {
+    job.status = 'queued';
+    pendingQueue.push(job);
+    persistJob(job);
+    return job;
+  }
+  activeJob = job;
+  void runJob(job);
+  return job;
+}
 
-  void (async () => {
-    try {
-      const { pois: residentials, quotaExhausted } = await searchResidentials(ak, center, radiusM, job);
+let activeJob: BatchJob | null = null;
+const pendingQueue: BatchJob[] = [];
+
+const runJob = async (job: BatchJob, samplesOverride?: Poi[]): Promise<void> => {
+  let filtered: Poi[] = [];
+  try {
+    if (samplesOverride) {
+      // №12 续跑：只处理未完成样本，已完成结果直接沿用，不重复计费
+      job.samples = samplesOverride;
+      filtered = samplesOverride;
+      job.total = samplesOverride.length;
+      job.done = 0;
+      if (!job.total) {
+        job.status = 'done';
+        persistJob(job);
+        return;
+      }
+    } else {
+      const { pois: residentials, quotaExhausted } = await searchResidentials(akOf(job), job.center, job.radiusM, job);
       if (quotaExhausted) {
         job.status = 'error';
         job.error = '百度检索当日配额已耗尽（status 302），请明日重试或更换配额更高的 AK';
         return;
       }
-      const samples = thinCommunities(residentials, maxCommunities);
+      const samples = thinCommunities(residentials, job.maxCommunities ?? 10);
       // 限制相邻采样点过近（<300m）重复
-      const filtered: Poi[] = [];
+      filtered = [];
       for (const p of samples) {
         if (filtered.every((q) => localDistM(p.lat, p.lng, q.lat, q.lng) >= 300)) filtered.push(p);
       }
+      job.samples = filtered;
       job.total = filtered.length;
       if (!job.total) {
         job.status = 'error';
         job.error = '片区内未检索到住宅小区，请扩大半径或更换地点';
         return;
       }
+      persistJob(job);
+    }
       for (const p of filtered) {
         if (job.cancelled) {
           job.status = 'cancelled';
@@ -250,8 +327,8 @@ export function startStreetBatch(
         job.current = p.name;
         try {
           const report = await analyzeWithServerProvider(
-            { center: { lat: p.lat, lng: p.lng }, persona, minutes: 15 },
-            ak,
+            { center: { lat: p.lat, lng: p.lng }, persona: (job as BatchJob & { persona?: 'adult' | 'elderly' | 'child' }).persona ?? 'adult', minutes: 15 },
+            akOf(job),
             () => {
               job.requestCount++;
             }
@@ -363,9 +440,73 @@ export function startStreetBatch(
       job.status = 'error';
       job.error = String((err as Error).message ?? err);
     }
-  })();
+    // №12 任务结算：释放全局执行位、持久化并接续排队任务
+    if (activeJob === job) activeJob = null;
+    persistJob(job);
+    const next = pendingQueue.shift();
+    if (next && next.status === 'queued') {
+      next.status = 'running';
+      activeJob = next;
+      persistJob(next);
+      void runJob(next);
+    }
+  };
 
+/** ak 不进持久化文件：进程内 WeakMap 保存，续跑由路由层重新注入 */
+const jobAk = new WeakMap<BatchJob, string>();
+function akOf(job: BatchJob): string {
+  return jobAk.get(job) ?? '';
+}
+
+/** №12 续跑：只处理未完成样本（已完成结果沿用，不重复计费） */
+export function resumeStreetBatch(ak: string, prevId: string, mode: 'remaining' | 'failed' = 'remaining'): BatchJob | null {
+  const prev = jobs.get(prevId) ?? loadPersisted(prevId);
+  if (!prev || !prev.samples?.length) return null;
+  if (prev.status === 'running' || prev.status === 'queued') return jobs.get(prevId) ?? null;
+  const okCenters = prev.communities.filter((c) => c.score >= 0).map((c) => c.center);
+  const failedCenters = prev.communities.filter((c) => c.score < 0).map((c) => c.center);
+  const isDone = (s: Poi) => okCenters.some((c) => localDistM(c.lat, c.lng, s.lat, s.lng) <= 50);
+  const remaining = mode === 'failed'
+    ? prev.samples.filter((s) => !isDone(s) && (failedCenters.some((c) => localDistM(c.lat, c.lng, s.lat, s.lng) <= 50) || okCenters.length === 0))
+    : prev.samples.filter((s) => !isDone(s));
+  if (!remaining.length) return null;
+  // 手工构造续跑任务：不走 startStreetBatch（避免其自动搜索空跑与续跑并发竞争）
+  const carried = prev.communities.filter((c) => c.score >= 0);
+  const job: BatchJob = {
+    id: jobId(), status: 'running', createdAt: Date.now(),
+    centerName: prev.centerName, center: prev.center, radiusM: prev.radiusM,
+    total: remaining.length, done: carried.length, current: '',
+    requestBudget: remaining.length * 40, requestCount: 0, consecutiveFailures: 0,
+    communities: carried, summary: null,
+    samples: remaining, maxCommunities: prev.maxCommunities ?? 10,
+    scope: (prev as BatchJob & { scope?: 'street' | 'district' }).scope ?? 'street',
+    persona: (prev as BatchJob & { persona?: 'adult' | 'elderly' | 'child' }).persona ?? 'adult'
+  };
+  jobAk.set(job, ak);
+  jobs.set(job.id, job);
+  persistJob(job);
+  if (activeJob && activeJob.status === 'running') {
+    job.status = 'queued';
+    pendingQueue.push(job);
+    persistJob(job);
+    return job;
+  }
+  activeJob = job;
+  void runJob(job, remaining);
   return job;
+}
+
+/** 列出任务（内存 + 持久化文件），供「任务找回」 */
+export function listJobs(): BatchJob[] {
+  const all = new Map<string, BatchJob>();
+  try {
+    if (existsSync(PERSIST_PATH)) {
+      const stored = JSON.parse(readFileSync(PERSIST_PATH, 'utf8')) as Record<string, BatchJob>;
+      for (const j of Object.values(stored)) all.set(j.id, j);
+    }
+  } catch { /* 忽略损坏文件 */ }
+  for (const j of jobs.values()) all.set(j.id, j);
+  return [...all.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 10);
 }
 
 export function getJob(id: string): BatchJob | undefined {

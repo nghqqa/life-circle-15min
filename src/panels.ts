@@ -705,10 +705,47 @@ function streetHtml(): string {
     <div class="rpt-sub" id="street-scope-note" style="margin-top:6px">街道体检：半径 ≤3km、≤16 个采样点。切到「城区试点」可扩大到 8km / 30 点，结果将按街道分组排名（约 3-6 分钟，企业配额）。</div>
   </div>
   <div id="street-status"></div>
-  <div id="street-usage" class="rpt-sub" style="margin-top:8px"></div>`;
+  <div id="street-usage" class="rpt-sub" style="margin-top:8px"></div>
+  <div id="street-jobs" class="rpt-sub" style="margin-top:8px"></div>`;
 }
 
 function wireStreet() {
+  // №12 任务找回/续跑：列出最近任务；运行中可找回轮询，中断/失败可续跑剩余样本
+  void (async () => {
+    const el = document.getElementById('street-jobs');
+    if (!el) return;
+    try {
+      const res = await fetch('/api/batch/jobs');
+      const data = await res.json();
+      const jobs: any[] = data.jobs ?? [];
+      if (!jobs.length) { el.textContent = ''; return; }
+      el.innerHTML = '最近任务：' + jobs.slice(0, 3).map((j) => {
+        const label = `${escapeHtml(j.centerName)}（${j.done}/${j.total} · ${j.status === 'running' ? '运行中' : j.status === 'queued' ? '排队中' : j.status === 'interrupted' ? '已中断' : j.status === 'error' ? '失败' : j.status === 'cancelled' ? '已取消' : '完成'}）`;
+        const find = j.status === 'running' || j.status === 'queued'
+          ? `<button class="btn ghost" data-jobfind="${j.id}" style="font-size:12px;padding:2px 6px">找回</button>` : '';
+        const resume = ['interrupted', 'error', 'cancelled'].includes(j.status)
+          ? `<button class="btn ghost" data-jobresume="${j.id}" style="font-size:12px;padding:2px 6px">续跑剩余</button>` : '';
+        return `${label} ${find}${resume}`;
+      }).join(' · ');
+      el.querySelectorAll('[data-jobfind]').forEach((b) => b.addEventListener('click', () => {
+        streetJobId = (b as HTMLElement).dataset.jobfind!;
+        startPolling();
+        banner('已找回该任务，继续轮询进度。', 'info');
+      }));
+      el.querySelectorAll('[data-jobresume]').forEach((b) => b.addEventListener('click', async () => {
+        const id = (b as HTMLElement).dataset.jobresume!;
+        try {
+          const res = await fetch('/api/batch/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: id, mode: 'remaining' }) });
+          const data = await res.json();
+          if (data.status !== 0) { banner(data.message ?? '续跑失败'); return; }
+          streetJobId = data.jobId;
+          startPolling();
+          banner(`续跑已启动：剩余 ${data.total} 个小区，已完成结果沿用。`, 'info');
+        } catch { banner('续跑请求失败，请稍后重试。'); }
+      }));
+    } catch { /* 演示模式无此端点 */ }
+  })();
+
   const scopeSel = document.getElementById('street-scope') as HTMLSelectElement | null;
   scopeSel?.addEventListener('change', () => {
     const d = scopeSel.value === 'district';
