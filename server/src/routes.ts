@@ -67,9 +67,27 @@ export function createApiRouter(cfg: ServerConfig): Router {
       res.json({ status: -1, message: '缺少 address' });
       return;
     }
-    sendCached(res, caches.geo, `geo:${address}`, () =>
-      callBaidu('/geocoding/v3/', { address }, buckets.geo, cfg.akServer)
-    );
+    sendCached(res, caches.geo, `geo:${address}`, async () => {
+      let r = await callBaidu('/geocoding/v3/', { address }, buckets.geo, cfg.akServer);
+      // 定位歧义防护：geocode 全国模糊匹配可能落到异地同名/相似机构
+      // （如「江西师范大学数字产业学院」不带城市前缀会落到北京）——
+      // 全国 POI 检索同名设施，名称强包含才采信，改写坐标返回
+      if (r.ok && r.body?.status === 0 && r.body.result?.location) {
+        const pr = await callBaidu('/place/v2/search', { query: address, region: '全国', page_size: '5', page_num: '0' }, buckets.place, cfg.akServer);
+        if (pr.ok && pr.body?.status === 0) {
+          const norm = (s: unknown) => String(s ?? '').replace(/[\s（）()\-—_、，,。.·]/g, '');
+          const q = norm(address);
+          for (const it of pr.body.results ?? []) {
+            const name = norm(it.name).replace(/(省|市|区|县)+$/, '');
+            if ((name.includes(q) || q.includes(name)) && Number.isFinite(it.location?.lat)) {
+              r = { ...r, body: { ...r.body, result: { ...r.body.result, location: it.location, level: 'POI消歧' } } };
+              break;
+            }
+          }
+        }
+      }
+      return r;
+    });
   });
 
   router.get('/reverse_geocoding/v3', (req, res) => {
