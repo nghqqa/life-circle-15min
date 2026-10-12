@@ -50,10 +50,8 @@ export interface Gateway {
 }
 
 /** 步行路线的一段：描述文本 + 该段几何（可为空 = 无几何数据） */
-export interface WalkingStepGeo {
-  text: string;
-  path: LatLng[];
-}
+import type { WalkingStepGeo } from '../shared/orchestrator.js';
+export type { WalkingStepGeo };
 
 /** 百度 direction 返回的 "lng,lat;lng,lat" 折线串 → LatLng[] */
 function parsePathString(s: unknown): LatLng[] {

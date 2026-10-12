@@ -310,4 +310,8 @@ export interface AnalysisResult {
   } | null;
   steps: { name: string; usage: ChannelUsage }[];
   mock: boolean;
+  /** true = 探针全部失败，等时圈为谐波兜底合成（API 投影附加字段） */
+  degraded?: boolean;
+  /** 各类别样本计数（API 投影附加字段） */
+  counts?: Record<string, number>;
 }

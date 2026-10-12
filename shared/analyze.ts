@@ -30,7 +30,8 @@ export interface AnalysisProvider {
   geocode(address: string): Promise<LatLng>;
   reverseGeocode(p: LatLng): Promise<string>;
   searchPoi(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<Poi[]>;
-  searchPoiDetailed?(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<PoiSearchResult>;
+  searchPoiDetailed?(keyword: string, category: CategoryId, center: LatLng, radiusM: number,
+    onPage?: (info: { keyword: string; page: number; fetched: number; budget: number }) => void): Promise<PoiSearchResult>;
   routeMatrix(origin: LatLng, dests: LatLng[]): Promise<(RouteProbe | null)[]>;
 }
 

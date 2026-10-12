@@ -120,9 +120,10 @@ export class BaiduServerProvider implements AnalysisProvider {
     return result.pois;
   }
 
-  async searchPoiDetailed(keyword: string, category: CategoryId, center: LatLng, radiusM: number): Promise<PoiSearchResult> {
+  async searchPoiDetailed(keyword: string, category: CategoryId, center: LatLng, radiusM: number,
+    onPage?: (info: { keyword: string; page: number; fetched: number; budget: number }) => void): Promise<PoiSearchResult> {
     return searchPoiPages({
-      keyword, category, source: 'server',
+      keyword, category, source: 'server', onPage,
       fetchPage: (page, pageSize) => this.searchPoiPage(keyword, category, center, radiusM, page, pageSize)
     });
   }
@@ -208,6 +209,41 @@ export class BaiduServerProvider implements AnalysisProvider {
       });
     }
     return out;
+  }
+
+  /** 步行路线细节（过街设施扫描用）：direction v2 单路径，含分段指令与折线 */
+  async walkingGeo(origin: LatLng, dest: LatLng): Promise<{ text: string; path: { lat: number; lng: number }[] }[]> {
+    const key = `dir:${origin.lat},${origin.lng}:${dest.lat},${dest.lng}`;
+    return withCache(routeCache, key, async () => {
+      let r = await this.call(
+        '/direction/v2/walking',
+        { origin: `${origin.lat},${origin.lng}`, destination: `${dest.lat},${dest.lng}` },
+        buckets.route
+      );
+      if (!r.ok || r.body?.status !== 0) {
+        if (this.isTransient(r)) {
+          await new Promise((res) => setTimeout(res, 500));
+          r = await this.call(
+            '/direction/v2/walking',
+            { origin: `${origin.lat},${origin.lng}`, destination: `${dest.lat},${dest.lng}` },
+            buckets.route
+          );
+        }
+      }
+      if (!r.ok || r.body?.status !== 0) throw new Error(r.body?.message ?? r.body?.msg ?? `direction ${r.body?.status}`);
+      const steps: any[] = r.body.result?.routes?.[0]?.steps ?? [];
+      return steps.map((s: any) => ({
+        text: String(s.instructions ?? ''),
+        path: String(s.path ?? '')
+          .split(';')
+          .filter(Boolean)
+          .map((pair: string) => {
+            const [lng, lat] = pair.split(',').map(Number);
+            return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+          })
+          .filter((p: { lat: number; lng: number } | null): p is { lat: number; lng: number } => p !== null)
+      }));
+    });
   }
 
   /** 瞬态错误判定：百度 status=1（Internal Service Error）或网络/网关层失败；配额与权限类错误不重试 */

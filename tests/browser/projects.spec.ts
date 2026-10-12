@@ -139,6 +139,10 @@ test('代理分页截断及配额耗尽可见，后续关键词和过街扫描�
         results: Array.from({ length: 20 }, (_, i) => ({ uid: `${n}-${i}`, name: `医院${n}-${i}`, location: { lat: 28.505 + (n * 20 + i) * 0.0001, lng: 118.02 } })) };
     } else if (url.pathname.endsWith('/usage')) {
       body = { status: 0, usage: { date: '2026-10-12', requests: { place: 0, route: 0, geo: 0, total: 0 }, cacheHits: 0, dailyBudget: 2000, overBudget: false, note: 'local-process-counter' } };
+    } else if (url.pathname === '/api/analyze/stream') {
+      // 本用例验证本地代理通道路径：流式端点不可用 → 客户端在收到事件前自动回退
+      await route.fulfill({ status: 404, json: { status: -1, message: '测试环境无流式编排' } });
+      return;
     } else { crossings++; body = { status: 0, result: { routes: [] } }; }
     await route.fulfill({ json: body });
   });
@@ -181,4 +185,43 @@ test('窄屏侧栏可导入与保存项目', async ({ page }, testInfo) => {
   await expect(page.locator('#project-status')).toContainText('已保存');
   await expect(page.locator('#project-list').locator('xpath=ancestor::*[contains(@class,"ant-select")]').locator('.ant-select-selection-item')).toContainText('手机端验收');
   await page.screenshot({ path: testInfo.outputPath('mobile-projects.png') });
+});
+
+test('服务端流式编排：UI 消费 SSE 进度与报告，本地不再发设施检索', async ({ page }) => {
+  const queries: string[] = [];
+  let crossings = 0;
+  const project = fixture();
+  const frames = [
+    { type: 'doing', index: 3, detail: '民生设施分类检索…' },
+    { type: 'note', text: 'POI 检索 1：小区 第 1/10 页 · 已取 20 条…' },
+    { type: 'done', index: 6, channel: 'server', ms: 12 },
+    { type: 'result', report: project.result }
+  ];
+  const plainArrays = (_k: string, v: unknown) => (v instanceof Uint8Array || v instanceof Float64Array) ? Array.from(v as unknown as Iterable<number>) : v;
+  const sse = frames.map((f) => `data: ${JSON.stringify(f, plainArrays)}
+
+`).join('');
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/config') return route.fulfill({ json: { browserAk: '', hasServerAk: true, mock: false } });
+    if (url.pathname === '/api/analyze/stream') {
+      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' }, body: sse });
+    }
+    if (url.pathname.endsWith('/usage')) {
+      return route.fulfill({ json: { status: 0, usage: { date: '2026-10-13', requests: { place: 0, route: 0, geo: 0, total: 0 }, cacheHits: 0, dailyBudget: 2000, overBudget: false, note: 'x' } } });
+    }
+    if (url.pathname.includes('/place/')) { queries.push(url.searchParams.get('query')!); return route.fulfill({ json: { status: 0, results: [] } }); }
+    if (url.pathname.includes('/direction/')) crossings++;
+    return route.fulfill({ json: { status: 0, result: { routes: [] } } });
+  });
+  await page.goto('/');
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#project-status')).toContainText('已保存', { timeout: 20_000 });
+  // 服务端报告直接渲染（fixture 社区名可见），本地通道零请求
+  await expect(page.locator('#panel-body')).toContainText('离线验收社区');
+  expect(queries).toEqual([]);
+  expect(crossings).toBe(0);
+  const storedProject = (await stored(page)).projects[0];
+  expect(storedProject.result.centerName).toBe('离线验收社区');
+  expect(storedProject.result.poiSearch).toBeUndefined();
 });

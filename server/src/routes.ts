@@ -4,7 +4,17 @@ import type { ServerConfig } from './config.js';
 import { TtlCache } from './cache.js';
 import { countCacheHit, usageSnapshot } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
-import { analyzeWithServerProvider } from './provider.js';
+import { BaiduServerProvider } from './provider.js';
+import {
+  runOrchestration,
+  boundarySetContains,
+  type Orchestrated,
+  type OrchestratorBoundary,
+  type OrchestratorEnv,
+  type OrchestratorOpts,
+  type OrchestratorSupplement
+} from '../../shared/orchestrator.js';
+import type { AnalysisResult, LatLng } from '../../shared/types.js';
 import { worldPopCoverage } from '../../shared/worldpop.js';
 import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, queuePosition, resumeStreetBatch } from './batch.js';
 import { escapeHtml as esc, getShare, saveShare } from './share.js';
@@ -271,25 +281,7 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
 
   // ================= 分析 API（面向多端 / 批量任务的地基） =================
 
-  // POST /api/analyze  {lat?, lng?, address?, persona?, minutes?} → 完整体检报告 JSON
-  router.post('/analyze', (req, res) => {
-    const { lat, lng, address, persona, minutes } = req.body ?? {};
-    if (!address && (typeof lat !== 'number' || typeof lng !== 'number')) {
-      res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
-      return;
-    }
-    analyzeWithServerProvider(
-      {
-        center: typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined,
-        address: typeof address === 'string' && address ? address : undefined,
-        persona: persona ?? 'adult',
-        minutes: Number(minutes) || 15
-      },
-      cfg.akServer
-    )
-      .then((report) => res.json({ status: 0, report }))
-      .catch((err) => res.json({ status: -1, message: String(err?.message ?? err) }));
-  });
+  // POST /api/analyze 与 /api/analyze/stream 的实现见下方「统一编排器」区块。
 
   // POST /api/popcoverage  {center, ring, radiusM} → {status:0, popCoverage|null}
   // 人口覆盖率兜底口径：住宅 POI 检索判「无法评估」时，服务端回源 WorldPop 2020
@@ -307,6 +299,171 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
     worldPopCoverage(center, ring, Number(radiusM))
       .then((popCoverage) => res.json({ status: 0, popCoverage }))
       .catch(() => res.json({ status: 0, popCoverage: null }));
+  });
+
+  // ================= 统一编排器（与页面 UI 完全同一份分析代码） =================
+
+  // 把 BaiduServerProvider 适配为共享编排器的环境接口：补计时与通道标记
+  function serverEnv(ak: string): OrchestratorEnv {
+    const provider = new BaiduServerProvider(ak);
+    const timed = <T>(p: Promise<T>): Promise<Orchestrated<T>> => {
+      const t0 = Date.now();
+      return p.then((value) => ({ value, channel: 'server' as const, ms: Date.now() - t0 }));
+    };
+    return {
+      routeMatrix: (origin, dests) => timed(provider.routeMatrix(origin, dests)),
+      searchPoiDetailed: (params, category, onPage) =>
+        timed(provider.searchPoiDetailed(params.query, category, params.location, params.radiusM, onPage)),
+      walkingGeo: (origin, dest) => timed(provider.walkingGeo(origin, dest)),
+      activeChannel: () => 'server'
+    };
+  }
+
+  function parseOrchestratorBody(body: any): {
+    center?: LatLng; address?: string; centerName?: string; persona: 'adult' | 'elderly' | 'child'; minutes: number;
+    crossingsOn: boolean; supplements: OrchestratorSupplement[]; boundary: OrchestratorBoundary | null;
+  } | null {
+    const { lat, lng, address, centerName, persona, minutes, crossingsOn, supplements, boundary } = body ?? {};
+    if (!address && !(typeof lat === 'number' && typeof lng === 'number')) return null;
+    const personaId = ['adult', 'elderly', 'child'].includes(persona) ? persona : 'adult';
+    const supps: OrchestratorSupplement[] = (Array.isArray(supplements) ? supplements : [])
+      .filter((s: any) => s && Number.isFinite(s.lat) && Number.isFinite(s.lng))
+      .slice(0, 500)
+      .map((s: any) => ({ name: String(s.name ?? '补录样本'), lat: Number(s.lat), lng: Number(s.lng) }));
+    let bnd: OrchestratorBoundary | null = null;
+    const okRings = (r: any): r is any[][] => Array.isArray(r) && r.length >= 3
+      && r.every((p: any) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    if (boundary && (okRings(boundary.rings) || (Array.isArray(boundary.rings) && boundary.rings.every(okRings)))) {
+      const toRing = (r: any[]): LatLng[] => r.map((p: any) => ({ lat: Number(p.lat), lng: Number(p.lng) }));
+      const exteriors: LatLng[][] = Array.isArray(boundary.rings) && okRings(boundary.rings[0])
+        ? boundary.rings.map(toRing)
+        : [toRing(boundary.rings)];
+      const holes: LatLng[][] = Array.isArray(boundary.holes) && boundary.holes.every(okRings)
+        ? boundary.holes.map(toRing)
+        : [];
+      bnd = {
+        name: String(boundary.name ?? '自定义边界').slice(0, 100),
+        vertexCount: exteriors.reduce((n, r) => n + r.length, 0) + holes.reduce((n, r) => n + r.length, 0),
+        rings: exteriors,
+        holes,
+        contains: (p) => boundarySetContains(exteriors, holes, p)
+      };
+    }
+    return {
+      center: typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined,
+      address: typeof address === 'string' && address ? address : undefined,
+      centerName: typeof centerName === 'string' && centerName ? centerName.slice(0, 100) : undefined,
+      persona: personaId,
+      minutes: Number(minutes) || 15,
+      crossingsOn: crossingsOn !== false,
+      supplements: supps,
+      boundary: bnd
+    };
+  }
+
+  // 类型化数组（时间场/覆盖掩码）默认会被 JSON.stringify 成 {"0":...} 形状，
+  // 客户端恢复校验会拒绝；统一序列化为普通数组
+  const plainArrays = (_key: string, value: unknown) =>
+    value instanceof Uint8Array || value instanceof Float64Array ? Array.from(value as unknown as Iterable<number>) : value;
+
+  async function runUnifiedAnalysis(
+    parsed: NonNullable<ReturnType<typeof parseOrchestratorBody>>,
+    hooks?: { onStep?: OrchestratorOpts['onStep']; onStepDone?: OrchestratorOpts['onStepDone']; onNote?: OrchestratorOpts['onNote']; isCancelled?: () => boolean }
+  ): Promise<AnalysisResult> {
+    let center = parsed.center;
+    let centerName = parsed.centerName ?? parsed.address ?? '';
+    const env = serverEnv(cfg.akServer);
+    if (!center && parsed.address) {
+      hooks?.onStep?.(0, '地理编码定位');
+      const t0 = Date.now();
+      // 与代理层同一套定位消歧：全国 POI 同名强包含才采信，避免异地同名机构
+      const address = parsed.address;
+      let r = await callBaidu('/geocoding/v3/', { address }, buckets.geo, cfg.akServer);
+      if (r.ok && r.body?.status === 0 && r.body.result?.location) {
+        const pr = await callBaidu('/place/v2/search', { query: address, region: '全国', page_size: '5', page_num: '0' }, buckets.place, cfg.akServer);
+        if (pr.ok && pr.body?.status === 0) {
+          const norm = (s: unknown) => String(s ?? '').replace(/[\s（）()\-—_、，,。.·]/g, '');
+          const q = norm(address);
+          for (const it of pr.body.results ?? []) {
+            const name = norm(it.name).replace(/(省|市|区|县)+$/, '');
+            if ((name.includes(q) || q.includes(name)) && Number.isFinite(it.location?.lat)) {
+              r = { ...r, body: { ...r.body, result: { ...r.body.result, location: it.location, level: 'POI消歧' } } };
+              break;
+            }
+          }
+        }
+      }
+      if (!r.ok || r.body?.status !== 0 || !r.body?.result?.location) {
+        throw new Error(r.body?.message ?? r.body?.msg ?? `地理编码失败 status ${r.body?.status ?? r.httpStatus}`);
+      }
+      center = { lat: r.body.result.location.lat, lng: r.body.result.location.lng };
+      hooks?.onStepDone?.(0, 'server', Date.now() - t0);
+    }
+    return runOrchestration(env, {
+      center: center!,
+      centerName,
+      persona: parsed.persona,
+      minutes: parsed.minutes,
+      crossingsOn: parsed.crossingsOn,
+      supplements: parsed.supplements,
+      boundary: parsed.boundary,
+      fetchPopCoverage: (c, ring, radiusM) => worldPopCoverage(c, ring, radiusM),
+      onStep: hooks?.onStep,
+      onStepDone: hooks?.onStepDone,
+      onNote: hooks?.onNote,
+      isCancelled: hooks?.isCancelled
+    });
+  }
+
+  // POST /api/analyze  {lat?, lng?, address?, persona?, minutes?, crossingsOn?, supplements?, boundary?}
+  // 统一编排器版单点完整体检（与页面 UI 同一份分析代码，数字口径一致）
+  router.post('/analyze', (req, res) => {
+    const parsed = parseOrchestratorBody(req.body);
+    if (!parsed) {
+      res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
+      return;
+    }
+    runUnifiedAnalysis(parsed)
+      .then((report) => { res.type('json').send(JSON.stringify({ status: 0, report }, plainArrays)); })
+      .catch((err) => res.json({ status: -1, message: String(err?.message ?? err) }));
+  });
+
+  // POST /api/analyze/stream  同上，但以 SSE 转发页级进度（doing/done/note），末帧给完整报告
+  router.post('/analyze/stream', (req, res) => {
+    const parsed = parseOrchestratorBody(req.body);
+    if (!parsed) {
+      res.status(400).json({ status: -1, message: '需要提供 address 或 lat/lng' });
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    const send = (event: unknown) => {
+      try { res.write(`data: ${JSON.stringify(event, plainArrays)}\n\n`); } catch { /* 客户端已断开 */ }
+    };
+    let closed = false;
+    res.on('close', () => { closed = true; });
+    const heartbeat = setInterval(() => { if (!closed) try { res.write(': ping\n\n'); } catch { /* noop */ } }, 15000);
+    runUnifiedAnalysis(parsed, {
+      onStep: (idx, detail) => send({ type: 'doing', index: idx, detail }),
+      onStepDone: (idx, channel, ms) => send({ type: 'done', index: idx, channel, ms }),
+      onNote: (text) => send({ type: 'note', text }),
+      isCancelled: () => closed
+    })
+      .then((report) => {
+        send({ type: 'result', report });
+        send({ type: 'end' });
+      })
+      .catch((err) => {
+        send({ type: 'error', message: String(err?.message ?? err) });
+      })
+      .finally(() => {
+        clearInterval(heartbeat);
+        try { res.end(); } catch { /* noop */ }
+      });
   });
 
   // POST /api/batch/street  {address|lat/lng, scope?, radiusM?, maxCommunities?} → {jobId}
