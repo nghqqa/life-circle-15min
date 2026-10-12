@@ -17,3 +17,5 @@ playwright-report/
 lc-web-fresh/
 *.log
 server-main.log
+lc-web-ghpages/
+lc-web-ghpages-fresh/
