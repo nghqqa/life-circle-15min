@@ -130,7 +130,23 @@ export function printableReport(r: AnalysisResult, w: WorkbenchSnapshot): string
   <p>“已取完”表示关键词的上游返回已取尽，非现实设施普查。无版本记录或旧规则项目仅保留历史结果。</p>
   ${table(['关键词', '通道', '已取 / 上游总数', '分页 / 上限', '完整性', '采集时间'], (r.poiSearch ?? []).map(s => [htmlText(s.keyword), sourceNames[s.source] + (s.cacheHit ? '（缓存）' : ''), `${s.fetchedCount} / ${s.reportedTotal ?? '未知'}`, `${s.pagesFetched} / ${s.pageLimit}`, statusNames[s.status], htmlText(s.collectedAt)]))}
   <h3>口径与警告</h3>${r.warnings?.length ? `<ul>${r.warnings.map(s => `<li>${htmlText(s)}</li>`).join('')}</ul>` : '<p>本次未记录额外警告，请结合上表完整性与模型口径使用。</p>'}
-  </main><script>document.getElementById('print-report').addEventListener('click',function(){window.print()});</script></body></html>`;
+  </main><script>
+  // 浏览器扩展（截图/便签类）会把悬浮控件注入页面并被一起打印——打印前后只保留本报告自己的节点
+  function __lcCleanInjected() {
+    var h = document.documentElement, b = document.body;
+    Array.prototype.slice.call(h.children).forEach(function (n) { if (n.tagName !== 'HEAD' && n.tagName !== 'BODY') n.remove(); });
+    Array.prototype.slice.call(b.children).forEach(function (n) {
+      if (n.tagName !== 'MAIN' && n.id !== 'lc-toolbar' && n.tagName !== 'SCRIPT') n.remove();
+    });
+  }
+  __lcCleanInjected();
+  setTimeout(__lcCleanInjected, 400);
+  setTimeout(__lcCleanInjected, 1500);
+  document.getElementById('print-report').addEventListener('click', function () {
+    __lcCleanInjected();
+    setTimeout(window.print, 60);
+  });
+  </script></body></html>`;
 }
 export function downloadText(text: string, filename: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));

@@ -10,7 +10,7 @@ const CORE = ['market', 'pharmacy', 'primarySchool'] as const;
 const catName = (c: string) => CATEGORY_MAP[c as keyof typeof CATEGORY_MAP]?.name ?? c;
 
 function FlyBtn({ lat, lng }: { lat: number; lng: number }) {
-  return <Button size="small" data-fly={`${lat},${lng}`}>定位</Button>;
+  return <Button size="small" data-fly={`${lat},${lng}`} data-fly-name="补点建议">定位</Button>;
 }
 
 export function PlanPanel({ r }: { r: AnalysisResult | null }) {

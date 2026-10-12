@@ -104,7 +104,8 @@ test('街道结果首次更新后即可定位，地图未知覆盖与列表一�
   expect(await page.evaluate(() => (window as any).__mapTest.centers)).toEqual([{ ...community.center, zoom: 16 }]);
   const info = await page.evaluate(() => {
     const state = (window as any).__mapTest;
-    state.overlays.filter((o: any) => o.kind === 'Marker').at(-1).events.click({});
+    // 定位高亮标记无点击监听——只挑注册了 click 的标注
+    state.overlays.filter((o: any) => o.kind === 'Marker' && typeof o.events.click === 'function').at(-1).events.click({});
     return { content: state.info, title: state.infoArgs?.[1]?.title };
   });
   expect(info.content).toContain('无法评估');

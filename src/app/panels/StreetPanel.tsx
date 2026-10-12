@@ -21,7 +21,7 @@ function CommunityTable({ communities }: { communities: StreetCommunity[] }) {
         { title: '等级', render: (_, c) => (c.grade === '-' ? '—' : <Tag className={`pill ${c.grade === 'A' || c.grade === 'B' ? 'ok' : c.grade === 'C' ? 'mid' : 'bad'}`}>{c.grade}</Tag>) },
         { title: '覆盖率', className: 'num', render: (_, c) => covText(c) },
         { title: '主要缺失', render: (_, c) => catName(c.dominantMissing) },
-        { title: '', render: (_, c) => <Button size="small" data-fly={`${c.center.lat},${c.center.lng}`}>定位</Button> },
+        { title: '', render: (_, c) => <Button size="small" data-fly={`${c.center.lat},${c.center.lng}`} data-fly-name={c.name}>定位</Button> },
       ]}
     />
   );

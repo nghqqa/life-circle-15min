@@ -156,6 +156,36 @@ export class MapView {
     this.map.centerAndZoom(new BMapGL.Point(p.lng, p.lat), zoom);
   }
 
+  private highlightOverlays: any[] = [];
+
+  /** 目标高亮：排名/表格「定位」时叠加蓝色圆环 + 定位符 + 名称，直到定位下一个目标 */
+  highlight(p: LatLng, label?: string) {
+    if (!this.ready) return;
+    for (const o of this.highlightOverlays) this.map.removeOverlay(o);
+    this.highlightOverlays = [];
+    const pt = new BMapGL.Point(p.lng, p.lat);
+    try {
+      if (typeof BMapGL.Circle === 'function') {
+        const ring = new BMapGL.Circle(pt, 150, {
+          strokeColor: '#2f6fed', strokeWeight: 3, strokeOpacity: 0.9,
+          fillColor: '#2f6fed', fillOpacity: 0.18
+        });
+        this.map.addOverlay(ring);
+        this.highlightOverlays.push(ring);
+      }
+    } catch { /* 桩环境无 Circle 时只放标记 */ }
+    const marker = new BMapGL.Marker(pt, { icon: iconFor('#2f6fed', '定', 32) });
+    this.map.addOverlay(marker);
+    this.highlightOverlays.push(marker);
+    if (label) {
+      const lbl = new BMapGL.Label(escapeHtml(label), { position: pt, offset: new BMapGL.Size(18, -18) });
+      lbl.setStyle({ background: '#2f6fed', color: '#fff', border: 'none', borderRadius: '6px', padding: '2px 8px', fontSize: '12px' });
+      this.map.addOverlay(lbl);
+      this.highlightOverlays.push(lbl);
+    }
+    this.flyTo(p);
+  }
+
   // ---- 图层数据 ----
 
   setHeat(dataUrl: string, sw: LatLng, ne: LatLng) {

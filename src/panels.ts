@@ -127,7 +127,7 @@ export function render() {
     const el = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-fly]') : null;
     if (!el || !body.contains(el)) return;
     const [lat, lng] = (el.dataset.fly ?? '').split(',').map(Number);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ lat, lng });
+    if (Number.isFinite(lat) && Number.isFinite(lng)) map.highlight({ lat, lng }, el.dataset.flyName);
   };
   window.dispatchEvent(new CustomEvent('lc:panel'));
 }
@@ -171,8 +171,8 @@ async function refreshJobList() {
     const jobs: any[] = data.jobs ?? [];
     streetJobs = jobs.slice(0, 3).map((j) => ({
       id: j.id,
-      label: `${j.centerName}（${j.done}/${j.total} · ${j.status === 'running' ? '运行中' : j.status === 'queued' ? '排队中' : j.status === 'interrupted' ? '已中断' : j.status === 'error' ? '失败' : j.status === 'cancelled' ? '已取消' : '完成'}）`,
-      canFind: j.status === 'running' || j.status === 'queued',
+      label: `${j.centerName}（${j.done}/${j.total} · ${j.status === 'running' ? '运行中' : j.status === 'queued' ? `排队中${j.queuePosition ? `（第 ${j.queuePosition} 位）` : ''}` : j.status === 'interrupted' ? '已中断' : j.status === 'error' ? '失败' : j.status === 'cancelled' ? '已取消' : '完成'}）`,
+      canFind: true,
       canResume: ['interrupted', 'error', 'cancelled'].includes(j.status),
     }));
   } catch { /* 演示模式无此端点 */ }

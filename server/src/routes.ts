@@ -5,7 +5,7 @@ import { TtlCache } from './cache.js';
 import { countCacheHit, usageSnapshot } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
-import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, resumeStreetBatch } from './batch.js';
+import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, queuePosition, resumeStreetBatch } from './batch.js';
 import { escapeHtml as esc, getShare, saveShare } from './share.js';
 
 /**
@@ -68,9 +68,25 @@ export function createApiRouter(cfg: ServerConfig): Router {
       res.json({ status: -1, message: '缺少 address' });
       return;
     }
-    sendCached(res, caches.geo, `geo:${address}`, () =>
-      callBaidu('/geocoding/v3/', { address }, buckets.geo, cfg.akServer)
-    );
+    sendCached(res, caches.geo, `geo:${address}`, async () => {
+      let r = await callBaidu('/geocoding/v3/', { address }, buckets.geo, cfg.akServer);
+      // 定位消歧：geocode 全国模糊匹配可能落到异地同名机构——全国 POI 同名强包含才采信
+      if (r.ok && r.body?.status === 0 && r.body.result?.location) {
+        const pr = await callBaidu('/place/v2/search', { query: address, region: '全国', page_size: '5', page_num: '0' }, buckets.place, cfg.akServer);
+        if (pr.ok && pr.body?.status === 0) {
+          const norm = (s: unknown) => String(s ?? '').replace(/[\s（）()\-—_、，,。.·]/g, '');
+          const q = norm(address);
+          for (const it of pr.body.results ?? []) {
+            const name = norm(it.name).replace(/(省|市|区|县)+$/, '');
+            if ((name.includes(q) || q.includes(name)) && Number.isFinite(it.location?.lat)) {
+              r = { ...r, body: { ...r.body, result: { ...r.body.result, location: it.location, level: 'POI消歧' } } };
+              break;
+            }
+          }
+        }
+      }
+      return r;
+    });
   });
 
   router.get('/reverse_geocoding/v3', (req, res) => {
@@ -332,7 +348,7 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
   // GET /api/batch/status/:jobId → 任务进度与结果
   // №12 任务找回/续跑/失败重试
   router.get('/batch/jobs', (_req, res) => {
-    res.json({ status: 0, jobs: listJobs().map((j) => ({ id: j.id, status: j.status, centerName: j.centerName, createdAt: j.createdAt, done: j.done, total: j.total })) });
+    res.json({ status: 0, jobs: listJobs().map((j) => ({ id: j.id, status: j.status, centerName: j.centerName, createdAt: j.createdAt, done: j.done, total: j.total, queuePosition: queuePosition(j.id) })) });
   });
   router.post('/batch/resume', (req, res) => {
     const { jobId, mode } = req.body ?? {};

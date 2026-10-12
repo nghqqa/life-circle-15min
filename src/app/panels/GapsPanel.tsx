@@ -101,7 +101,7 @@ export function GapsPanel({ r }: { r: AnalysisResult | null }) {
             { title: '最远距离', align: 'right', render: (_, p) => p.maxNearestM > 0 ? `${Math.round(p.maxNearestM)}m` : '无' },
             {
               title: '',
-              render: (_, p) => <Button size="small" data-fly={`${p.centroid.lat},${p.centroid.lng}`}>定位</Button>
+              render: (_, p) => <Button size="small" data-fly={`${p.centroid.lat},${p.centroid.lng}`} data-fly-name={`灰色斑块 #${p.id}`}>定位</Button>
             }
           ]}
           dataSource={g.patches}
