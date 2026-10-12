@@ -19,9 +19,11 @@ export interface PoiSearchOptions {
   category: CategoryId;
   source: ChannelName;
   fetchPage: (page: number, pageSize: number) => Promise<PoiSearchPage>;
-  /** 仅允许减小预算，硬上限 3 页 × 20 条。 */
+  /** 仅允许减小预算，硬上限 = 类别页上限（住宅 10 页、其余 5 页）。 */
   pageLimit?: number;
   pageSize?: number;
+  /** 页级进度回调：每取完一页调用（关键词/页码/已取条数/预算），供 UI 显示动态进度 */
+  onPage?: (info: { keyword: string; page: number; fetched: number; budget: number }) => void;
 }
 
 export function isPoiQuotaError(error: unknown): boolean {
@@ -101,6 +103,7 @@ export async function searchPoiPages(options: PoiSearchOptions): Promise<PoiSear
     if (previousTotal !== undefined && previousTotal !== total) totalChanged = true;
     previousTotal = total;
     if (total != null) reportedTotal = Math.max(reportedTotal ?? 0, total);
+    options.onPage?.({ keyword: options.keyword, page: pagesFetched - 1, fetched: dedupePois(pois).length, budget: pageLimit });
     const rows = totalOf(batch.rawCount) ?? batch.pois.length;
     rawCount += rows;
     if (rows !== batch.pois.length) invalidRows = true;
