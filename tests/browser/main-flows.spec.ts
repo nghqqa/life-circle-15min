@@ -5,6 +5,14 @@ import { createProject, serializeProject, PROJECT_STORAGE_KEY, type WorkbenchSna
 import { analyzeGaps, buildChecklist, computeScore, type AnalysisResult } from '../../shared/index.js';
 
 const emptyWorkbench = (): WorkbenchSnapshot => ({ acceptedSites: [], rejectedSites: [] });
+// antd Select：id 落在内部 input 上；点击展开后从 portal 下拉里按选项文案选
+async function selectAntd(page: Page, id: string, label: string | RegExp) {
+  const sel = page.locator(`#${id}`);
+  const wrap = sel.locator('xpath=ancestor-or-self::*[contains(concat(" ",normalize-space(@class)," ")," ant-select ")]').first();
+  await wrap.click();
+  const opt = page.locator('.ant-select-dropdown .ant-select-item-option').getByText(label as string, { exact: typeof label === 'string' });
+  await opt.first().click();
+}
 async function importFixture(page: Page, result = comparisonFixture(), workbench = emptyWorkbench()) {
   const project = createProject(result, workbench, '完整流程验收');
   await page.locator('#project-file').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(serializeProject(project)) });
@@ -46,7 +54,7 @@ async function fakeMap(page: Page) {
         addEventListener(name: string, callback: (e: any) => void) { state.events[name] = callback; }
         addOverlay(item: Overlay) { state.overlays.push(item); }
         removeOverlay(item: Overlay) { state.overlays = state.overlays.filter((x: Overlay) => x !== item); }
-        openInfoWindow(info: Overlay) { state.info = info.args[0]; }
+        openInfoWindow(info: Overlay) { state.info = info.args[0]; state.infoArgs = info.args; }
       },
       Marker: overlay('Marker'), Label: overlay('Label'), GroundOverlay: overlay('GroundOverlay'),
       Polyline: overlay('Polyline'), Polygon: overlay('Polygon'), Circle: overlay('Circle'),
@@ -96,12 +104,11 @@ test('街道结果首次更新后即可定位，地图未知覆盖与列表一�
   expect(await page.evaluate(() => (window as any).__mapTest.centers)).toEqual([{ ...community.center, zoom: 16 }]);
   const info = await page.evaluate(() => {
     const state = (window as any).__mapTest;
-    // 定位高亮标记无点击监听——只挑注册了 click 的标注（批量小区标注）
-    state.overlays.filter((o: any) => o.kind === 'Marker' && typeof o.events.click === 'function').at(-1).events.click({});
-    return state.info;
+    state.overlays.filter((o: any) => o.kind === 'Marker').at(-1).events.click({});
+    return { content: state.info, title: state.infoArgs?.[1]?.title };
   });
-  expect(info).toContain('无法评估');
-  expect(info).toContain('&lt;img'); expect(info).not.toContain('<img');
+  expect(info.content).toContain('无法评估');
+  expect(info.title).toContain('&lt;img'); expect(info.title).not.toContain('<img');
 });
 
 test('另存为、切换和删除不会串改方案，取消删除保留项目', async ({ page }) => {
@@ -120,23 +127,23 @@ test('另存为、切换和删除不会串改方案，取消删除保留项目',
   const changedCopy = await current(page);
   expect(changedCopy.workbench.acceptedSites).toHaveLength(0);
   expect(changedCopy.workbench.scenarios.B.acceptedSites).toHaveLength(0);
-  await page.locator('#project-list').selectOption(original.id); await page.locator('#project-open').click();
+  await selectAntd(page, 'project-list', /^项目原件 ·/); await page.locator('#project-open').click();
   expect(await current(page)).toEqual(original);
   await expect(page.locator('#project-name')).toHaveValue('项目原件');
-  await page.locator('#project-list').selectOption(copy.id); await page.locator('#project-open').click();
+  await selectAntd(page, 'project-list', /^项目原件（副本） ·/); await page.locator('#project-open').click();
   expect(await current(page)).toEqual(changedCopy);
   accept = false; const beforeDelete = await store(page); await page.locator('#project-delete').click();
   expect(await store(page)).toEqual(beforeDelete);
   accept = true; await page.locator('#project-delete').click();
   expect((await store(page)).projects).toEqual([original]);
-  await page.locator('#project-list').selectOption(original.id); await page.locator('#project-open').click();
+  await selectAntd(page, 'project-list', /^项目原件 ·/); await page.locator('#project-open').click();
   await page.locator('#project-delete').click();
   expect((await store(page)).projects).toEqual([]);
   await page.locator('[data-tab="plan"]').click(); await page.locator('[data-act="undo-accept"]').click();
   expect((await store(page)).projects).toEqual([]);
   const backup = JSON.parse(await download(page, '#project-export'));
   expect(backup.workbench.acceptedSites).toHaveLength(0);
-  await page.reload(); await expect(page.locator('#project-list')).toHaveValue('');
+  await page.reload(); await expect(page.locator('#project-list')).toHaveValue(''); // antd Select 内层 input 无选中时值为空
   await expect(page.locator('#project-export')).toBeDisabled();
 });
 
@@ -176,7 +183,8 @@ for (const [persona, speed, minutes] of [['adult', 80, 5], ['elderly', 52, 10], 
     await page.goto('/'); await importFixture(page);
     await page.locator('[data-tab="compare"]').click(); await page.locator('[data-scenario-save="A"]').click();
     const old = await current(page);
-    await page.locator('#persona').selectOption(persona); await page.locator('#minutes').selectOption(String(minutes));
+    await selectAntd(page, 'persona', { adult: '一般成人', elderly: '老年人', child: '儿童(陪同)' }[persona]);
+    await selectAntd(page, 'minutes', `${minutes} 分钟`);
     await page.locator('#ly-cross').uncheck(); await page.locator('#btn-analyze').click();
     await expect(page.locator('#project-export')).toBeDisabled(); await expect(page.locator('#persona')).toBeDisabled();
     await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 20_000 });
@@ -381,7 +389,7 @@ test('规划编辑审查修复：禁建区拦截采纳、预算扣减与表单�
   // F4：禁建区覆盖全域后，自定义候选无法采纳
   await page.locator('#pe-zone').fill('100000');
   await page.locator('#pe-zone-add').click();
-  await page.locator('#pe-cat').selectOption('market');
+  await selectAntd(page, 'pe-cat', '菜市场');
   await page.locator('#pe-lat').fill('28.46');
   await page.locator('#pe-lng').fill('117.97');
   await page.locator('#pe-add').click();
@@ -484,7 +492,7 @@ test('样本补录：登记去重提示、并入下一次体检并在警告中�
 test('老年口径报告含老年友好解读与口径边界说明', async ({ page }) => {
   await page.goto('/');
   await importFixture(page);
-  await page.locator('#persona').selectOption('elderly');
+  await selectAntd(page, 'persona', '老年人');
   await page.locator('#btn-analyze').click();
   await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 20_000 });
   await page.locator('[data-tab="report"]').click();
@@ -492,3 +500,39 @@ test('老年口径报告含老年友好解读与口径边界说明', async ({ pa
   await expect(page.locator('#panel-body')).toContainText('无障碍能力需实地核验');
 });
 
+
+
+test('工程自证页：本次运行证据、实测批次、门禁清单与细则对照可见', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 60_000 });
+  await page.locator('[data-tab="proof"]').click();
+  const body = page.locator('#panel-body');
+  await expect(body).toContainText('本次运行证据');
+  await expect(body).toContainText('调用步骤');
+  await expect(body).toContainText('中心定位');
+  await expect(body).toContainText('实测跑批记录');
+  await expect(body).toContainText('2026-10-11');
+  await expect(body).toContainText('工程门禁');
+  await expect(body).toContainText('docker compose up --build');
+  await expect(body).toContainText('评审细则');
+  await expect(body).toContainText('空间插值');
+  await expect(body).toContainText('docs/COMPARISON_TEST.md');
+});
+
+test('分享图卡：下载为 PNG 且文件名含点位与等级', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#btn-analyze').click();
+  await expect(page.locator('#btn-analyze')).toBeEnabled({ timeout: 60_000 });
+  const pending = page.waitForEvent('download');
+  await page.locator('#btn-share-card').click();
+  const dl = await pending;
+  expect(dl.suggestedFilename()).toMatch(/体检图卡.*[A-E]\d+\.png$/);
+  const buf = await dl.createReadStream().then(async (s) => {
+    const chunks: Buffer[] = [];
+    for await (const c of s) chunks.push(c as Buffer);
+    return Buffer.concat(chunks);
+  });
+  expect(buf.subarray(0, 4).toString('hex')).toBe('89504e47'); // PNG magic
+  expect(buf.length).toBeGreaterThan(50_000);
+});

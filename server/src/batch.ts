@@ -239,7 +239,7 @@ export function startStreetBatch(
     total: 0,
     done: 0,
     current: '检索片区内住宅小区…',
-    requestBudget: maxCommunities * 80, // 分页预算 5 页后单社区最坏 ~64 次检索，放宽到 ×80
+    requestBudget: maxCommunities * 40,
     requestCount: 0,
     consecutiveFailures: 0,
     communities: [],
@@ -497,12 +497,6 @@ export function resumeStreetBatch(ak: string, prevId: string, mode: 'remaining' 
 }
 
 /** 列出任务（内存 + 持久化文件），供「任务找回」 */
-/** 排队位次（1 起）；非排队任务返回 null */
-export function queuePosition(id: string): number | null {
-  const idx = pendingQueue.findIndex((j) => j.id === id);
-  return idx === -1 ? null : idx + 1;
-}
-
 export function listJobs(): BatchJob[] {
   const all = new Map<string, BatchJob>();
   try {

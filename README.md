@@ -3,14 +3,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nghqqa/life-circle-15min/actions/workflows/ci.yml"><img src="https://github.com/nghqqa/life-circle-15min/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/license-MIT-2f6fed" alt="License: MIT">
+  <a href="https://github.com/wookat/life-circle-web/actions/workflows/ci.yml"><img src="https://github.com/wookat/life-circle-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2f6fed" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-2f6fed" alt="Node ≥ 20">
   <img src="https://img.shields.io/badge/%E7%99%BE%E5%BA%A6%E5%9C%B0%E5%9B%BE-GL%20JS%20API%20%2B%20Web%20API-2932e1" alt="百度地图 GL JS API + Web API">
 </p>
-
-> [!IMPORTANT]
-> **新版前端已迁移至 [wookat/life-circle-web](https://github.com/wookat/life-circle-web)**：React + Ant Design 全量重构（组件库、图标、布局、自适应统一）。本仓库保留为稳定 vanilla TS 演示版，功能管线一致。
 
 ## 本地项目与数据完整性（新增）
 
@@ -31,16 +28,19 @@
 
 ## 实测效果（历史提交批次）
 
-以下截图和指标对应 `submission-2026` 的历史提交批次。新增分页与不完整数据处理后，重新体检可能得到不同结果；本次功能验收使用离线数据，未重新调用真实 AK 更新这些实测指标。
+双社区数字已于 **2026-10-11 用真实 AK 重新实测**（服务端通道 · 企业配额 · 48 向批量算路），
+下表文字已同步为新批次结果；截图仍为历史批次存档（视觉参考，数字以文字为准）。
+街道/城区批量区块为 2026-10-10 批次实测。
 
-同一座城市，两个社区，系统的区分度。以下均为**服务端通道**（企业配额 AK · 48 向批量算路）的
-正式实测口径（2026-10-10 批次，数字与下方截图同批）：
+同一座城市，两个社区，系统的区分度：
 
-**样例 A · 新校区（成人）—— E 级 26 分 · 人口覆盖率无法评估**
+**样例 A · 新校区（成人）—— E 级 26 分 · 人口覆盖率 28%（WorldPop 栅格口径）**
 
 药店、养老服务、菜市场、小学、幼儿园检索均为 0，医院与社区诊所各 1 家但都在 1.5km 外——
-新建校区配套空白的典型案例；步行可达范围内未采样到住宅小区，人口覆盖率如实显示
-「无法评估」（未知 ≠ 0%）；累积机会：15 分钟步行圈可抵达设施仅 **4 处 / 2 类**：
+新建校区配套空白的典型案例；步行可达范围内未采样到住宅小区，住宅 POI 口径覆盖率
+判「无法评估」（未知 ≠ 0%），系统随即回退 **WorldPop 2020 人口栅格**：等时圈内常住人口
+仅约 368 / 理想步行圈 1,200m 内约 1,295（**28%**）——新校区是真的没什么人；
+累积机会：15 分钟步行圈可抵达设施仅 **4 处 / 2 类**：
 
 ![](docs/data/screenshots/A-adult.png)
 
@@ -51,10 +51,13 @@
 
 ![](docs/data/screenshots/A-elderly.png)
 
-**样例 B · 老城核心（对照）—— C 级 68 分**
+**样例 B · 老城核心（对照）—— B 级 76 分**
 
-医院 20 · 社区诊所 20 · 药店 20 · 幼儿园 20 · 公交站 20（触及检索返回上限），
-累积机会 **34 处 / 8 类**，与样例 A 形成鲜明对比，验证系统区分度：
+医院 3 · 社区诊所 3 · 药店 6 · 商超 15 · 公交站 9，
+累积机会 **43 处 / 8 类**，与样例 A 形成鲜明对比，验证系统区分度；
+超市（60/89）与小区（60/112）检索触及分页上限被标记「检索不完整」，
+住宅 POI 口径覆盖率判「无法评估」，WorldPop 栅格兜底为 **51%**（等时圈 3,465 人 /
+理想步行圈 6,742 人）。老年人视角：**B 级 76 分，累积机会收缩至 15 处 / 7 类**：
 
 ![](docs/data/screenshots/B-urban.png)
 
@@ -102,13 +105,18 @@
 
 完整数据、人工核对过程与误差来源见 [真实对比测试报告](docs/COMPARISON_TEST.md)。
 
+### 在线演示
+
+**https://wookat.github.io/life-circle-web/** —— GitHub Pages 静态部署，打开即用：浏览器 AK 直连百度 Web API（真实地图与 POI），服务端不可用或配额异常时自动降级合成数据，演示永不中断。只读分享与街道批量等需服务端的功能在该部署上不可用（接口缺失时如实提示）。
+
 ### 演示视频
 
-[![圈点·核心功能演示](docs/data/screenshots/A-adult.png)](docs/video/圈点-核心功能演示.mp4)
+[![圈点·核心功能演示](docs/data/screenshots/A-adult.png)](docs/video/圈点-核心功能演示-v4.mp4)
 
-▶ [docs/video/圈点-核心功能演示.mp4](docs/video/圈点-核心功能演示.mp4)（52 秒，无声走查版：
-定位 → 48 向真实路网体检 → 热力面/盲区 → 规划建议采纳 → 对标清单 → 老年人视角对比。
-配音解说版按 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) 分镜录制。）
+▶ [docs/video/圈点-核心功能演示-v4.mp4](docs/video/圈点-核心功能演示-v4.mp4)（2 分 46 秒，配音叙事版：
+章节卡 + 真实界面实录 + TTS 旁白，按「诊断 → 处方 → 验证」动线展开——
+定位体检、决策摘要、三人群公平性对比、补点收益、MAE 与 WorldPop 自证。
+分镜脚本见 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)。）
 
 ## 这是什么
 
@@ -167,13 +175,14 @@ docker compose up --build
 针对上饶市两个真实社区 + 一个整条街道 + 一个城区级试点完成对比实测（含老年人视角、
 双通道交叉验证、人工核对与插值精度自证），正式口径已统一为**服务端通道**：
 
-- 样例 A（新校区·成人）：**E 级 26 分**，五类设施检索为 0，人口覆盖率如实显示「无法评估」（未知 ≠ 缺失）；
+- 样例 A（新校区·成人）：**E 级 26 分**，八类设施缺失，住宅 POI 覆盖率如实判「无法评估」后由 WorldPop 栅格兜底为 **28%**；
 - 样例 A·老年人视角：可达圈收缩，累积机会 4 处/2 类 → **2 处/1 类**；
-- 样例 B（老城核心）：**C 级 68 分**，医院/诊所/药店/幼儿园/公交站均触及检索返回上限；
+- 样例 B（老城核心）：**B 级 76 分**，累积机会 43 处/8 类；超市与小区检索触及分页上限如实标记不完整；
+- 样例 B·老年人视角：同为 B 级 76 分，累积机会收缩至 **15 处/7 类**——同一社区人群口径差异立现；
 - 街道批量（东市街道 10 小区）：均分 88.4，最优最差极差 14 分，薄弱清单自动生成；
 - 城区试点（信州区 14 小区）：街道分组排名揭示**茅家岭街道（高校新区）7 个小区 5 个薄弱**；
 - 算路交叉验证：GL SDK 单路径 3084m vs 服务端批量算路 3083m（误差 0.03%）；
-- 插值精度自证：困难地形 MAE 5.73 分钟（31.6%）· 常规街区 3.89 分钟（23.7%）。
+- 插值精度自证：困难地形 MAE 5.73 分钟（31.6%）· 常规街区 3.89 分钟（23.7%）· 老年口径同点 9.3 / 8.56 分钟。
 
 详见 [docs/COMPARISON_TEST.md](docs/COMPARISON_TEST.md)。
 
@@ -187,7 +196,7 @@ docker compose up --build
 | `docs/TECH_DESIGN.md` | 技术设计文档：API 策略 / 等时圈算法 / POI 清洗 / 盲区算法 / 规划引擎 |
 | `docs/COMPARISON_TEST.md` | 真实社区对比测试报告 |
 | `docs/DEMO_SCRIPT.md` | 答辩演示脚本（5 分钟版 + 现场故障预案） |
-| `tests/` | vitest 单元测试（19 项：坐标 / 时间场 / 盲区 / 评分 / 选址） |
+| `tests/` | vitest 单元测试 175 项（坐标 / 时间场 / 盲区 / 评分 / 选址 / POI 完整性等）+ playwright 浏览器测试 31 项 |
 
 开发命令：
 

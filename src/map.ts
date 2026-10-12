@@ -1,6 +1,10 @@
+import { createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { CATEGORY_MAP } from '../shared/config.js';
 import { simplifyLine } from '../shared/timefield.js';
 import type { CrossingSegment, GapPatch, LatLng, PlanSite, Poi } from '../shared/types.js';
+import { PoiPop } from './app/PoiPop.js';
 
 /**
  * 地图视图封装：所有图层 no-op 安全（演示模式下底图不可用时静默跳过）。
@@ -27,6 +31,7 @@ export class MapView {
   private visible: Record<LayerKey, boolean> = { heat: true, rings: true, poi: true, gap: true, plan: true, cross: true, route: true, batch: true, boundary: true };
   private data: Record<string, any> = {};
   private centerMarker: any = null;
+  private popRoot: Root | null = null;
 
   async init(
     browserAk: string,
@@ -44,10 +49,9 @@ export class MapView {
       this.map.addControl(new BMapGL.ScaleControl());
       this.map.addControl(new BMapGL.NavigationControl3D());
       this.ready = true;
-      // 缩放结束后按新级别重渲染设施标注（低级别聚合、高级别展开）
-      this.map.addEventListener('zoomend', () => {
-        if (this.visible.poi && this.data.pois) this.renderLayer('poi');
-      });
+      if (import.meta.env.DEV) {
+        (window as unknown as Record<string, unknown>).__lcDebugPoiPop = (p: Poi, cat: string) => this.openPoiPop(p, cat);
+      }
       if (onPick) {
         this.map.addEventListener('click', (e: any) => {
           if (e.latlng) onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
@@ -56,13 +60,34 @@ export class MapView {
       if (onContext) {
         // 用 DOM contextmenu 而非地图 rightclick：POI/热力面等覆盖物会吞掉地图层事件
         const el = document.getElementById('map')!;
+        const fire = (px: { x: number; y: number }) => {
+          const ll = this.map.pixelToPoint(new BMapGL.Pixel(px.x, px.y));
+          if (ll) onContext({ lat: ll.lat, lng: ll.lng }, px);
+        };
         el.addEventListener('contextmenu', (e: MouseEvent) => {
           e.preventDefault();
           const rect = el.getBoundingClientRect();
-          const px = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          const ll = this.map.pixelToPoint(new BMapGL.Pixel(px.x, px.y));
-          if (ll) onContext({ lat: ll.lat, lng: ll.lng }, px);
+          fire({ x: e.clientX - rect.left, y: e.clientY - rect.top });
         });
+        // 触屏等效：单指长按 550ms 弹同一份「设为中心点」菜单（拖动/捏合即取消）
+        let lpTimer: ReturnType<typeof setTimeout> | null = null;
+        let lpStart: { x: number; y: number } | null = null;
+        const lpCancel = () => { if (lpTimer) clearTimeout(lpTimer); lpTimer = null; lpStart = null; };
+        el.addEventListener('touchstart', (e: TouchEvent) => {
+          if (e.touches.length !== 1) { lpCancel(); return; }
+          const t = e.touches[0];
+          const rect = el.getBoundingClientRect();
+          lpStart = { x: t.clientX - rect.left, y: t.clientY - rect.top };
+          lpTimer = setTimeout(() => { if (lpStart) fire(lpStart); lpCancel(); }, 550);
+        }, { passive: true });
+        el.addEventListener('touchmove', (e: TouchEvent) => {
+          if (!lpStart || e.touches.length !== 1) return;
+          const t = e.touches[0];
+          const rect = el.getBoundingClientRect();
+          if (Math.hypot(t.clientX - rect.left - lpStart.x, t.clientY - rect.top - lpStart.y) > 10) lpCancel();
+        }, { passive: true });
+        el.addEventListener('touchend', lpCancel);
+        el.addEventListener('touchcancel', lpCancel);
       }
       return true;
     } catch (err) {
@@ -120,10 +145,7 @@ export class MapView {
         position: pt,
         offset: new BMapGL.Size(14, -14)
       });
-      lbl.setStyle({
-        background: '#2f6fed', color: '#fff', border: 'none', borderRadius: '6px',
-        padding: '2px 8px', fontSize: '12px'
-      });
+      lbl.setStyle(mapLabelStyle('#2f6fed'));
       this.map.addOverlay(lbl);
       (this as any)._centerLabel = lbl;
     }
@@ -132,36 +154,6 @@ export class MapView {
   flyTo(p: LatLng, zoom = 16) {
     if (!this.ready) return;
     this.map.centerAndZoom(new BMapGL.Point(p.lng, p.lat), zoom);
-  }
-
-  private highlightOverlays: any[] = [];
-
-  /** 目标高亮：排名/表格「定位」时叠加蓝色圆环 + 定位符 + 名称，直到定位下一个目标 */
-  highlight(p: LatLng, label?: string) {
-    if (!this.ready) return;
-    for (const o of this.highlightOverlays) this.map.removeOverlay(o);
-    this.highlightOverlays = [];
-    const pt = new BMapGL.Point(p.lng, p.lat);
-    try {
-      if (typeof BMapGL.Circle === 'function') {
-        const ring = new BMapGL.Circle(pt, 150, {
-          strokeColor: '#2f6fed', strokeWeight: 3, strokeOpacity: 0.9,
-          fillColor: '#2f6fed', fillOpacity: 0.18
-        });
-        this.map.addOverlay(ring);
-        this.highlightOverlays.push(ring);
-      }
-    } catch { /* 桩环境无 Circle 时只放标记 */ }
-    const marker = new BMapGL.Marker(pt, { icon: iconFor('#2f6fed', '定', 32) });
-    this.map.addOverlay(marker);
-    this.highlightOverlays.push(marker);
-    if (label) {
-      const lbl = new BMapGL.Label(escapeHtml(label), { position: pt, offset: new BMapGL.Size(18, -18) });
-      lbl.setStyle({ background: '#2f6fed', color: '#fff', border: 'none', borderRadius: '6px', padding: '2px 8px', fontSize: '12px' });
-      this.map.addOverlay(lbl);
-      this.highlightOverlays.push(lbl);
-    }
-    this.flyTo(p);
   }
 
   // ---- 图层数据 ----
@@ -209,10 +201,39 @@ export class MapView {
     this.renderLayer('cross');
   }
 
-  /** 路线核验连线：直线示意，距离与耗时以真实路网计算的报告文本为准；null 清除 */
-  setRoute(points: [LatLng, LatLng] | null) {
-    this.data.route = points;
+  /** 路线核验连线：真实步行路径折线（walkingGeo 逐段几何拼接）；null 清除 */
+  setRoute(path: LatLng[] | null) {
+    this.data.route = path;
     this.renderLayer('route');
+  }
+
+  /** POI 详情弹窗：React+antd 渲染进 InfoWindow 宿主节点，与全局组件体系统一 */
+  private openPoiPop(p: Poi, categoryName: string) {
+    this.popRoot?.unmount();
+    this.popRoot = null;
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    this.popRoot = root;
+    // 同步提交后再开弹窗：异步 render 时 BMapGL 量到的高度太小，按钮区会被裁
+    flushSync(() => {
+      root.render(createElement(PoiPop, {
+        name: p.name,
+        category: categoryName,
+        address: p.address ?? '',
+        uid: p.uid,
+        act: (ds) => (window as unknown as { __lcPoiAct?: (d: Record<string, string>) => void }).__lcPoiAct?.(ds)
+      }));
+    });
+    const info = new BMapGL.InfoWindow(host, { width: 320, title: escapeHtml(p.name) });
+    // close 只卸载自己那个 root：openInfoWindow 会先关掉旧弹窗触发其 close，
+    // 若按 this.popRoot 卸载会把刚挂上的新 root 一并卸掉（第二个弹窗空白）
+    info.addEventListener?.('close', () => {
+      if (this.popRoot === root) { this.popRoot = null; }
+      root.unmount();
+    });
+    this.map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
+    // 兜底：样式/字体异步加载导致二次排版时强制重测高度
+    requestAnimationFrame(() => info.redraw?.());
   }
 
   toggleLayer(key: LayerKey, on: boolean) {
@@ -271,10 +292,7 @@ export class MapView {
             position: new BMapGL.Point(north.lng, north.lat),
             offset: new BMapGL.Size(-38, -16)
           });
-          lbl.setStyle({
-            background: 'rgba(255,255,255,0.92)', color: st.color, border: `1px solid ${st.color}`,
-            borderRadius: '6px', padding: '1px 7px', fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap'
-          });
+          lbl.setStyle(mapLabelStyle(st.color));
           map.addOverlay(lbl);
           this.overlays.rings.push(lbl);
         }
@@ -282,12 +300,10 @@ export class MapView {
     }
 
     if (key === 'route') {
-      const pts = this.data.route as [LatLng, LatLng] | null;
-      if (pts && pts.length === 2) {
-        const pl = new BMapGL.Polyline([
-          new BMapGL.Point(pts[0].lng, pts[0].lat),
-          new BMapGL.Point(pts[1].lng, pts[1].lat)
-        ], { strokeColor: '#2f6fed', strokeWeight: 3, strokeOpacity: 0.85, strokeStyle: 'dashed' });
+      const path = this.data.route as LatLng[] | null;
+      if (path && path.length >= 2) {
+        const pts = path.map((p) => new BMapGL.Point(p.lng, p.lat));
+        const pl = new BMapGL.Polyline(pts, { strokeColor: '#2f6fed', strokeWeight: 4, strokeOpacity: 0.9, strokeStyle: 'solid' });
         map.addOverlay(pl);
         this.overlays.route.push(pl);
       }
@@ -303,76 +319,19 @@ export class MapView {
     }
 
     if (key === 'poi' && this.data.pois) {
-      const poiList = (this.data.pois as Poi[]).filter((p) => p.category !== 'residential');
-      const zoom = (() => { try { const z = this.map.getZoom?.(); return typeof z === 'number' ? z : 16; } catch { return 16; } })();
-      // 低缩放级别：网格聚合（~60px 视口网格），标注数量，点击放大展开——避免数百标注糊满地图
-      if (zoom < 16) {
-        const cellDeg = 0.004 * Math.pow(2, 15 - zoom);
-        const groups = new Map<string, { lng: number; lat: number; count: number; sample: Poi }>();
-        for (const p of poiList) {
-          const gk = `${Math.floor(p.lng / cellDeg)}:${Math.floor(p.lat / cellDeg)}`;
-          const g = groups.get(gk);
-          if (g) g.count += 1;
-          else groups.set(gk, { lng: p.lng, lat: p.lat, count: 1, sample: p });
-        }
-        for (const g of groups.values()) {
-          const pt = new BMapGL.Point(g.lng, g.lat);
-          if (g.count === 1) {
-            const p = g.sample;
-            const def = CATEGORY_MAP[p.category];
-            const marker = new BMapGL.Marker(pt, { icon: iconFor(def.color, def.name.slice(0, 1)) });
-            marker.addEventListener('click', () => {
-              const info = new BMapGL.InfoWindow(
-                `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/>
-                <button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">步行路线核验</button> <button class="btn ghost" data-hours-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">营业时段</button>
-                <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
-                  <select data-corr-status="${escapeHtml(p.uid)}" style="font-size:12px;height:24px">
-                    <option>已核验</option><option>停业</option><option>迁移</option><option>分类错误</option>
-                  </select>
-                  <input data-corr-note="${escapeHtml(p.uid)}" placeholder="说明(可空)" style="font-size:12px;width:90px;height:24px">
-                  <button class="btn ghost" data-corr-save="${escapeHtml(p.uid)}" data-corr-name="${escapeHtml(p.name)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="font-size:12px;padding:2px 6px">标注</button>
-                  <button class="btn ghost" data-corr-undo-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="font-size:12px;padding:2px 6px">撤销标注</button>
-                </div></div>`,
-                { width: 240 }
-              );
-              map.openInfoWindow(info, pt);
-            });
-            map.addOverlay(marker);
-            this.overlays.poi.push(marker);
-          } else {
-            const marker = new BMapGL.Marker(pt, { icon: iconFor('#334155', String(g.count), 30) });
-            marker.addEventListener('click', () => { this.flyTo({ lat: g.lat, lng: g.lng }, Math.min(18, zoom + 2)); });
-            map.addOverlay(marker);
-            this.overlays.poi.push(marker);
-          }
-        }
-      } else {
-      // 高缩放级别：逐个设施标注（含详情弹窗）
+      const poiList = this.data.pois as Poi[];
       for (const p of poiList) {
+        if (p.category === 'residential') continue;
         const def = CATEGORY_MAP[p.category];
         const marker = new BMapGL.Marker(new BMapGL.Point(p.lng, p.lat), {
           icon: iconFor(def.color, def.name.slice(0, 1))
         });
         marker.addEventListener('click', () => {
-          const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:200px"><b>${escapeHtml(p.name)}</b><br/><span style="color:#5a6478">${def.name} · ${escapeHtml(p.address ?? '')}</span><br/>
-            <button class="btn ghost" data-route-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">步行路线核验</button> <button class="btn ghost" data-hours-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="margin-top:6px;font-size:12px;padding:2px 6px">营业时段</button>
-            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
-              <select data-corr-status="${escapeHtml(p.uid)}" style="font-size:12px;height:24px">
-                <option>已核验</option><option>停业</option><option>迁移</option><option>分类错误</option>
-              </select>
-              <input data-corr-note="${escapeHtml(p.uid)}" placeholder="说明(可空)" style="font-size:12px;width:90px;height:24px">
-              <button class="btn ghost" data-corr-save="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" data-corr-name="${escapeHtml(p.name)}" style="font-size:12px;padding:2px 6px">标注</button>
-              <button class="btn ghost" data-corr-undo-uid="${escapeHtml(p.uid)}" onclick="__lcPoiAct&&__lcPoiAct(this)" style="font-size:12px;padding:2px 6px">撤销标注</button>
-            </div></div>`,
-            { width: 240 }
-          );
-          map.openInfoWindow(info, new BMapGL.Point(p.lng, p.lat));
+          this.openPoiPop(p, def.name);
         });
         map.addOverlay(marker);
         this.overlays.poi.push(marker);
       }
-      } // 高缩放分支结束
       // 住宅小区用小圆点展示（人口代理）
       for (const p of poiList.filter((x: Poi) => x.category === 'residential')) {
         const marker = new BMapGL.Marker(new BMapGL.Point(p.lng, p.lat), {
@@ -403,10 +362,7 @@ export class MapView {
           `#${patch.id} ${patch.severity === 'severe' ? '重度' : '中度'}缺${catName(patch.dominant)} · ${(patch.weightShare * 100).toFixed(0)}%居住`,
           { position: new BMapGL.Point(patch.centroid.lng, patch.centroid.lat), offset: new BMapGL.Size(-60, -10) }
         );
-        label.setStyle({
-          background: color, color: '#fff', border: 'none', borderRadius: '6px',
-          padding: '2px 8px', fontSize: '11px', whiteSpace: 'nowrap'
-        });
+        label.setStyle(mapLabelStyle(color));
         map.addOverlay(label);
         this.overlays.gap.push(label);
       }
@@ -418,8 +374,8 @@ export class MapView {
         const marker = new BMapGL.Marker(pt, { icon: iconFor('#00bcd4', `补${site.rank}`) });
         marker.addEventListener('click', () => {
           const info = new BMapGL.InfoWindow(
-            `<div style="font-size:13px;min-width:220px"><b>规划建议 #${site.rank}：补建${catName(site.category)}</b><br/>${escapeHtml(site.rationale)}</div>`,
-            { width: 250 }
+            `<div class="poi-pop"><div class="poi-pop-sub">${escapeHtml(site.rationale)}</div></div>`,
+            { width: 250, title: `规划建议 #${site.rank}：补建${catName(site.category)}` }
           );
           map.openInfoWindow(info, pt);
         });
@@ -439,10 +395,7 @@ export class MapView {
           position: new BMapGL.Point(site.latLng.lng, site.latLng.lat + 0.0093),
           offset: new BMapGL.Size(-52, -6)
         });
-        lbl.setStyle({
-          background: 'rgba(255,255,255,0.92)', color: '#0097a7', border: '1px solid #00bcd4',
-          borderRadius: '6px', padding: '1px 7px', fontSize: '11px', whiteSpace: 'nowrap'
-        });
+        lbl.setStyle(mapLabelStyle('#00bcd4'));
         map.addOverlay(lbl);
         this.overlays.plan.push(lbl);
       }
@@ -480,10 +433,10 @@ export class MapView {
         const marker = new BMapGL.Marker(pt, { icon: iconFor(color, c.grade === '-' ? '?' : String(c.grade)) });
         const coverage = c.coverageUnavailable || c.coverageShare == null ? '无法评估' : `${Math.round(c.coverageShare * 100)}%`;
         const summary = c.score >= 0
-          ? `<b>${escapeHtml(c.name)}</b><br/>评分 ${c.score}（${escapeHtml(c.grade)} 级）· 人口覆盖率 ${coverage}${c.dominantMissing ? `<br/>主要缺失：${escapeHtml(catName(c.dominantMissing))}` : ''}`
-          : `<b>${escapeHtml(c.name)}</b><br/>分析失败`;
+          ? `评分 ${c.score}（${escapeHtml(c.grade)} 级）· 人口覆盖率 ${coverage}${c.dominantMissing ? `<br/>主要缺失：${escapeHtml(catName(c.dominantMissing))}` : ''}`
+          : '分析失败';
         marker.addEventListener('click', () => {
-          const info = new BMapGL.InfoWindow(`<div style="font-size:13px;min-width:200px">${summary}</div>`, { width: 240 });
+          const info = new BMapGL.InfoWindow(`<div class="poi-pop">${summary}</div>`, { width: 240, title: escapeHtml(c.name) });
           map.openInfoWindow(info, pt);
         });
         map.addOverlay(marker);
@@ -512,6 +465,15 @@ function iconCenter(): any {
     anchor: new BMapGL.Size(size / 2, size / 2),
     imageSize: new BMapGL.Size(size, size)
   });
+}
+
+/** 地图标注统一样式令牌：白底彩边小卡片，颜色随图层语义 */
+function mapLabelStyle(color: string) {
+  return {
+    background: 'rgba(255,255,255,0.92)', color, border: `1px solid ${color}`,
+    borderRadius: '6px', padding: '1px 7px', fontSize: '11px', fontWeight: '600',
+    whiteSpace: 'nowrap'
+  } as const;
 }
 
 function iconFor(color: string, glyph: string, size = 26): any {

@@ -135,9 +135,9 @@ test('代理分页截断及配额耗尽可见，后续关键词和过街扫描�
       const kw = url.searchParams.get('query')!;
       const n = Number(url.searchParams.get('page_num'));
       queries.push(`${kw}:${n}`);
-      body = kw === '诊所' ? { status: 302, message: '测试配额耗尽' } : { status: 0, total: 200,
+      body = kw === '诊所' ? { status: 302, message: '测试配额耗尽' } : { status: 0, total: 100,
         results: Array.from({ length: 20 }, (_, i) => ({ uid: `${n}-${i}`, name: `医院${n}-${i}`, location: { lat: 28.505 + (n * 20 + i) * 0.0001, lng: 118.02 } })) };
-    } else if (url.pathname === '/api/baidu/usage') {
+    } else if (url.pathname.endsWith('/usage')) {
       body = { status: 0, usage: { date: '2026-10-12', requests: { place: 0, route: 0, geo: 0, total: 0 }, cacheHits: 0, dailyBudget: 2000, overBudget: false, note: 'local-process-counter' } };
     } else { crossings++; body = { status: 0, result: { routes: [] } }; }
     await route.fulfill({ json: body });
@@ -145,7 +145,7 @@ test('代理分页截断及配额耗尽可见，后续关键词和过街扫描�
   await page.goto('/');
   await page.locator('#btn-analyze').click();
   await expect(page.locator('#project-status')).toContainText('已保存', { timeout: 20_000 });
-  expect(queries).toEqual(['医院:0', '医院:1', '医院:2', '医院:3', '医院:4', '诊所:0']);
+  expect(queries).toEqual(['医院:0', '医院:1', '医院:2', '诊所:0']);
   expect(crossings).toBe(0);
   await expect(page.locator('.data-quality')).toContainText('达到上限');
   await expect(page.locator('.data-quality')).toContainText('未执行');
@@ -179,6 +179,6 @@ test('窄屏侧栏可导入与保存项目', async ({ page }, testInfo) => {
   await page.locator('#project-name').fill('手机端验收');
   await page.locator('#project-save').click();
   await expect(page.locator('#project-status')).toContainText('已保存');
-  await expect(page.locator('#project-list')).toContainText('手机端验收');
+  await expect(page.locator('#project-list').locator('xpath=ancestor::*[contains(@class,"ant-select")]').locator('.ant-select-selection-item')).toContainText('手机端验收');
   await page.screenshot({ path: testInfo.outputPath('mobile-projects.png') });
 });

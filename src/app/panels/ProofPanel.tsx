@@ -1,0 +1,189 @@
+import { Alert, Steps, Table, Tag, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import type { AnalysisResult, ChannelUsage } from '../../../shared/types.js';
+import { CHANNEL_LABEL } from '../../hud.js';
+import { BATCH_ROWS, DELIVERABLES, GATES, MAPPING_ROWS, REPO, blob } from '../proofData.js';
+import { ISO_IDEAL_RADIUS_M, ISO_SAMPLES, type IsoSample } from '../isochroneCompareData.js';
+
+/** 等时圈形态：三样例同一米尺并排（虚线圆 = 直线半径理想圈，实线 = 真实路网 15 分钟环） */
+function IsoPanel({ s }: { s: IsoSample }) {
+  const W = 236, H = 210, R = 78; // px：理想半径在面板中的像素半径（三图同尺）
+  const cx = W / 2, cy = H / 2 - 10;
+  const k = R / ISO_IDEAL_RADIUS_M;
+  const d = s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${(cx + x * k).toFixed(1)},${(cy - y * k).toFixed(1)}`).join(' ') + ' Z';
+  return (
+    <div style={{ flex: '1 1 220px', maxWidth: 260, border: '1px solid var(--line)', borderRadius: 10, padding: 8 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} role="img" aria-label={`${s.label} 等时圈`}>
+        <circle cx={cx} cy={cy} r={R} fill="none" stroke="#b0b7c6" strokeDasharray="5 4" strokeWidth="1.2" />
+        <path d={d} fill="rgba(77,144,255,0.14)" stroke="#4d90ff" strokeWidth="2" strokeLinejoin="round" />
+        <circle cx={cx} cy={cy} r={3.5} fill="#d94f4f" />
+        <text x={cx} y={cy + R + 14} textAnchor="middle" fontSize="10" fill="#8a94a8">虚线=直线理想圈 r=1200m</text>
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '0 2px' }}>
+        <b style={{ fontSize: 13 }}>{s.label}</b>
+        <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>{s.grade}/{s.score} · {s.cumulative}处/{s.cats}类</span>
+      </div>
+    </div>
+  );
+}
+
+type StepRow = { name: string; channel: string; ms: number; cacheHit: boolean; note?: string };
+
+const stepCols: ColumnsType<StepRow> = [
+  { title: '调用步骤', dataIndex: 'name', width: 104, ellipsis: true },
+  { title: '通道', dataIndex: 'channel', width: 88, render: (c: string) => <Tag>{c}</Tag> },
+  { title: '耗时', dataIndex: 'ms', width: 72, align: 'right', render: (ms: number) => `${ms}ms` },
+  { title: '缓存', dataIndex: 'cacheHit', width: 52, render: (h: boolean) => (h ? '命中' : '—') },
+  { title: '说明', dataIndex: 'note', ellipsis: true },
+];
+
+const batchCols: ColumnsType<(typeof BATCH_ROWS)[number]> = [
+  { title: '批次', dataIndex: 'batch', width: 92 },
+  { title: '点位', dataIndex: 'site', width: 150, ellipsis: true },
+  { title: '人群', dataIndex: 'persona', width: 52 },
+  { title: '评级', dataIndex: 'grade', width: 64 },
+  { title: '累积机会', dataIndex: 'opportunity', width: 88, ellipsis: true },
+  { title: '插值 MAE', dataIndex: 'mae', width: 124 },
+  { title: '备注', dataIndex: 'note', ellipsis: true },
+];
+
+const gateCols: ColumnsType<(typeof GATES)[number]> = [
+  { title: '门禁', dataIndex: 'name', width: 132 },
+  { title: '结果', dataIndex: 'result', width: 168 },
+  { title: '复现命令', dataIndex: 'reproduce', ellipsis: true, render: (c: string) => <code>{c}</code> },
+];
+
+const mapCols: ColumnsType<(typeof MAPPING_ROWS)[number]> = [
+  { title: '评分细则', dataIndex: 'rule', width: 124 },
+  { title: '本项目实现', dataIndex: 'impl', ellipsis: true },
+  {
+    title: '证据位置', dataIndex: 'evidence', width: 220,
+    render: (e: { label: string; href: string }) => (
+      <Typography.Link href={e.href} target="_blank" rel="noreferrer">{e.label}</Typography.Link>
+    ),
+  },
+];
+
+function LiveEvidence({ r }: { r: AnalysisResult }) {
+  const steps: StepRow[] = r.steps.map((s: { name: string; usage: ChannelUsage }) => ({
+    name: s.name,
+    channel: CHANNEL_LABEL[s.usage.channel] ?? s.usage.channel,
+    ms: s.usage.ms,
+    cacheHit: Boolean(s.usage.cacheHit),
+    note: s.usage.note,
+  }));
+  const totalMs = steps.reduce((a, s) => a + s.ms, 0);
+  const cacheHits = steps.filter((s) => s.cacheHit).length;
+  const channels = [...new Set(steps.map((s) => s.channel))].join(' / ');
+  return (
+    <>
+      <Alert
+        className="rpt-summary" type="info" showIcon={false}
+        message={(() => {
+          const searches = r.poiSearch ?? [];
+          const mockN = searches.filter((s) => s.source === 'mock').length;
+          const partial = r.mock && mockN > 0 && mockN < searches.length;
+          return r.mock
+            ? (partial
+              ? `本次运行 ${mockN}/${searches.length} 类检索落入合成兜底（其余为真实检索），下表为本地会话真实步骤记录。`
+              : '本次运行为演示数据（合成通道），下表为本地会话真实步骤记录。')
+            : `本次体检真实调用：${steps.length} 步 · 合计 ${(totalMs / 1000).toFixed(1)}s · 通道 ${channels} · 缓存命中 ${cacheHits}`;
+        })()}
+      />
+      <Table<StepRow>
+        size="small" rowKey={(s) => s.name + s.ms} columns={stepCols} dataSource={steps}
+        pagination={false} scroll={{ x: 'max-content' }} style={{ marginTop: 8 }}
+      />
+      {r.accuracy && (
+        <div className="log-line" style={{ marginTop: 8 }}>
+          插值精度自证：抽样 {r.accuracy.samples} 路真实算路核验，MAE {r.accuracy.maeMinutes} 分钟
+          （{r.accuracy.maePercent}%）· 最差偏差 {r.accuracy.worstPercent}%
+        </div>
+      )}
+      {r.popCoverage && (
+        <div className="log-line">
+          人口覆盖（WorldPop 2020 · 100m 栅格）：等时圈 {Math.round(r.popCoverage.popIn).toLocaleString()} 人
+          / 理想圈 {Math.round(r.popCoverage.popEval).toLocaleString()} 人 ≈ {Math.round(r.popCoverage.share * 100)}%
+        </div>
+      )}
+      {(r.warnings?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <b>本次降级 / 容错事件（如实记录，不掩盖）：</b>
+          {r.warnings!.map((w, i) => <div className="log-line log-warn" key={i}>{w}</div>)}
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ProofPanel({ r }: { r: AnalysisResult | null }) {
+  return (
+    <>
+      <Alert
+        type="info" showIcon={false} style={{ marginBottom: 10 }}
+        message={<b>60 秒评委路径</b>}
+      />
+      <Steps
+        size="small" direction="vertical" current={r ? 3 : 0}
+        items={[
+          { title: '跑一次体检', description: '顶栏输入地址（或直接点「开始体检」用样例点），约 30 秒出热力面与报告' },
+          { title: '看人群公平性对比', description: '报告页展开「人群公平性对比」，同一坐标成人/老人/儿童并排评分' },
+          { title: '回本页核对证据', description: '下方本次运行步骤、实测批次、门禁与细则对照，均可点开复现' },
+        ]}
+      />
+
+      <div className="empty-title" style={{ marginTop: 14 }}>本次运行证据</div>
+      {r
+        ? <LiveEvidence r={r} />
+        : <div className="log-line">先完成一次体检——这里会记录本次会话的真实调用步骤、耗时、通道与降级事件。</div>}
+
+      <div className="empty-title" style={{ marginTop: 18 }}>实测跑批记录（真 AK · 服务端通道）</div>
+      <Table
+        size="small" rowKey={(x) => x.site + x.persona} columns={batchCols} dataSource={BATCH_ROWS}
+        pagination={false} scroll={{ x: 'max-content' }} style={{ marginTop: 8 }}
+      />
+      <div className="log-line">
+        全量口径与人工核对过程：<Typography.Link href={blob('docs/COMPARISON_TEST.md')} target="_blank" rel="noreferrer">docs/COMPARISON_TEST.md</Typography.Link>
+        {' '}｜在线演示可复现：<Typography.Link href="https://wookat.github.io/life-circle-web/" target="_blank" rel="noreferrer">wookat.github.io/life-circle-web</Typography.Link>
+      </div>
+
+      <div className="empty-title" style={{ marginTop: 18 }}>等时圈形态 · 三样例同尺对比（真实路网 ≠ 直线半径）</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
+        {ISO_SAMPLES.map((s) => <IsoPanel key={s.id} s={s} />)}
+      </div>
+      <div className="log-line" style={{ marginTop: 6 }}>
+        同一成人 15 分钟口径：老城核心环饱满、在建新校区狭长偏置、高校封闭校区被围墙切割——面积与朝向差异全部来自真实路网算路，非直线缓冲。
+      </div>
+
+      <div className="empty-title" style={{ marginTop: 18 }}>工程门禁</div>
+      <div className="log-line" style={{ margin: '6px 0' }}>
+        <Typography.Link href={`${REPO}/actions`} target="_blank" rel="noreferrer">
+          <img alt="CI status" src={`${REPO}/actions/workflows/ci.yml/badge.svg`} style={{ verticalAlign: '-3px' }} />
+        </Typography.Link>
+        {' '}GitHub Actions · main 分支全绿（点击进流水记录）
+      </div>
+      <Table
+        size="small" rowKey="name" columns={gateCols} dataSource={GATES}
+        pagination={false} scroll={{ x: 'max-content' }} style={{ marginTop: 8 }}
+      />
+
+      <div className="empty-title" style={{ marginTop: 18 }}>交付物清单（点开可核）</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+        {DELIVERABLES.map((d) => (
+          <Typography.Link key={d.path} href={blob(d.path)} target="_blank" rel="noreferrer">
+            <Tag color="blue" style={{ cursor: 'pointer' }}>{d.name}</Tag>
+          </Typography.Link>
+        ))}
+      </div>
+
+      <div className="empty-title" style={{ marginTop: 18 }}>评审细则 ↔ 实现对照</div>
+      <Table
+        size="small" rowKey="rule" columns={mapCols} dataSource={MAPPING_ROWS}
+        pagination={false} scroll={{ x: 'max-content' }} style={{ marginTop: 8 }}
+      />
+      <div className="log-line" style={{ marginTop: 8, color: 'var(--ink-2)' }}>
+        口径声明：本页数字均标注批次与来源；不同日期复测的 POI 计数存在日间漂移，以仓库文档为正式口径。
+      </div>
+    </>
+  );
+}
