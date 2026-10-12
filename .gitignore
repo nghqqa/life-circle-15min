@@ -16,3 +16,4 @@ playwright-report/
 .share-store.json
 lc-web-fresh/
 *.log
+server-main.log
