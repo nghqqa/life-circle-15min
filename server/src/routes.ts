@@ -5,6 +5,7 @@ import { TtlCache } from './cache.js';
 import { countCacheHit, usageSnapshot } from './usage.js';
 import { buckets, callBaidu } from './baidu.js';
 import { analyzeWithServerProvider } from './provider.js';
+import { worldPopCoverage } from '../../shared/worldpop.js';
 import { startStreetBatch, getJob, cancelJob, sweepJobs, listJobs, queuePosition, resumeStreetBatch } from './batch.js';
 import { escapeHtml as esc, getShare, saveShare } from './share.js';
 
@@ -288,6 +289,24 @@ export function createAnalysisRouter(cfg: ServerConfig): Router {
     )
       .then((report) => res.json({ status: 0, report }))
       .catch((err) => res.json({ status: -1, message: String(err?.message ?? err) }));
+  });
+
+  // POST /api/popcoverage  {center, ring, radiusM} → {status:0, popCoverage|null}
+  // 人口覆盖率兜底口径：住宅 POI 检索判「无法评估」时，服务端回源 WorldPop 2020
+  // 100m 常住人口栅格估算。免密钥、不占百度配额；上游不可达时返回 null（维持
+  // 「无法评估」，不编造数字），前端据此继续走浏览器直连兜底。
+  router.post('/popcoverage', (req, res) => {
+    const { center, ring, radiusM } = req.body ?? {};
+    const okCenter = center && Number.isFinite(center.lat) && Number.isFinite(center.lng);
+    const okRing = Array.isArray(ring) && ring.length >= 3 && ring.length <= 512
+      && ring.every((p: any) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    if (!okCenter || !okRing || !Number.isFinite(Number(radiusM))) {
+      res.status(400).json({ status: -1, message: '需要提供 center{lat,lng}、ring[≥3 顶点] 与 radiusM' });
+      return;
+    }
+    worldPopCoverage(center, ring, Number(radiusM))
+      .then((popCoverage) => res.json({ status: 0, popCoverage }))
+      .catch(() => res.json({ status: 0, popCoverage: null }));
   });
 
   // POST /api/batch/street  {address|lat/lng, scope?, radiusM?, maxCommunities?} → {jobId}
