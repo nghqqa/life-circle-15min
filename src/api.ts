@@ -144,7 +144,7 @@ export class ServerGateway implements Gateway {
 
   searchPoiDetailed(params: PoiSearchParams, category: CategoryId, onPage?: (info: { keyword: string; page: number; fetched: number; budget: number }) => void): Promise<PoiSearchResult> {
     return searchPoiPages({ keyword: params.query, category, source: this.name, onPage, fetchPage: async (page) => {
-      if (page > 0) await new Promise((resolve) => setTimeout(resolve, 450));
+      if (page > 0) await new Promise((resolve) => setTimeout(resolve, 120)); // 企业配额 QPS 充裕；客户端另有令牌桶兜底
       const query = new URLSearchParams({ query: params.query,
         location: `${params.location.lat},${params.location.lng}`,
         radius: String(params.radiusM), page_num: String(page) });
