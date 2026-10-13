@@ -233,7 +233,15 @@ export class ClientGateway implements Gateway {
     // 优先 GL SDK Geocoder（走 JS API 鉴权），SDK 未就绪时退回 JSONP REST
     if (window.BMapGL) {
       try {
-        return await this.glGeocode(address);
+        const pt = await this.glGeocode(address);
+        // 定位消歧（与服务端代理同口径）：全国模糊 getPoint 可能落到异地同名机构
+        try {
+          const fixed = await this.glDisambiguate(address, pt);
+          if (fixed) return fixed;
+        } catch {
+          /* 消歧失败保持原结果 */
+        }
+        return pt;
       } catch {
         /* 继续走 JSONP */
       }
@@ -241,6 +249,71 @@ export class ClientGateway implements Gateway {
     const r = await this.jsonp('https://api.map.baidu.com/geocoding/v3/', { address });
     if (r.status !== 0) throw new Error(`geocode status ${r.status}`);
     return { lat: r.result.location.lat, lng: r.result.location.lng, level: r.result.level };
+  }
+
+  /** 名称归一化强包含（与服务端 POI 消歧同一口径）：双向包含才采信 */
+  private nameMatches(query: string, candidate: string): boolean {
+    const norm = (s: string) => String(s ?? '').replace(/[\s（）()\-—_、，,。.·]/g, '');
+    const q = norm(query);
+    const n = norm(candidate).replace(/(省|市|区|县)+$/, '');
+    return !!q && !!n && (n.includes(q) || q.includes(n));
+  }
+
+  /**
+   * 全国模糊 getPoint 的同名 POI 消歧：
+   * ① 地址含城市提示→城市域搜索，否则当前视口搜索；② getPoint 落点 3km 就近验证；
+   * ③ 无城市提示且落点不可信时，回项目默认城市搜索。强包含命中才采信，采信不到保持原结果。
+   */
+  private async glDisambiguate(address: string, fallback: GeocodeResult): Promise<GeocodeResult | null> {
+    const cityHint = address.match(/[\u4e00-\u9fa5]{2,8}市/)?.[0];
+    if (cityHint) {
+      const hits = await this.glSearchTitles(cityHint, address);
+      const hit = hits.find((p) => this.nameMatches(address, p.title));
+      if (hit) return { lat: hit.point.lat, lng: hit.point.lng, level: 'POI消歧' };
+    }
+    const near = await this.glSearchTitles(new window.BMapGL.Point(fallback.lng, fallback.lat), address, 3000);
+    if (near.some((p) => this.nameMatches(address, p.title))) return fallback;
+    if (!cityHint) {
+      const home = await this.glSearchTitles(
+        new window.BMapGL.Point(DEFAULT_CENTER.lng, DEFAULT_CENTER.lat), address, 8000);
+      const hit = home.find((p) => this.nameMatches(address, p.title));
+      if (hit) return { lat: hit.point.lat, lng: hit.point.lng, level: 'POI消歧' };
+    }
+    return null;
+  }
+
+  /** GL LocalSearch 取 POI 标题与坐标：location 为城市字符串（全域）、Map（视口）或 Point（需 radiusM） */
+  private glSearchTitles(loc: any, query: string, radiusM?: number): Promise<{ title: string; point: { lat: number; lng: number } }[]> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('gl search timeout')), 8000);
+      try {
+        const search = new window.BMapGL.LocalSearch(loc, {
+          pageCapacity: 8,
+          onSearchComplete: (res: any) => {
+            clearTimeout(timer);
+            try {
+              const n = (res && res.getCurrentNumPois && res.getCurrentNumPois()) || 0;
+              const out: { title: string; point: { lat: number; lng: number } }[] = [];
+              for (let i = 0; i < n; i++) {
+                const p = res.getPoi(i);
+                if (p?.point && p.title) out.push({ title: String(p.title), point: { lat: p.point.lat, lng: p.point.lng } });
+              }
+              resolve(out);
+            } catch (e) {
+              reject(e as Error);
+            }
+          }
+        });
+        if (radiusM && typeof loc === 'object' && loc.lng !== undefined) {
+          search.searchNearby(query, loc, radiusM);
+        } else {
+          search.search(query);
+        }
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e as Error);
+      }
+    });
   }
 
   async reverseGeocode(p: LatLng): Promise<string> {
